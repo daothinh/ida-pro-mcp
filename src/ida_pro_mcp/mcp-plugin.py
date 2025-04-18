@@ -1018,7 +1018,14 @@ class MCP(idaapi.plugin_t):
         return idaapi.PLUGIN_KEEP
 
     def run(self, args):
-        self.server.start()
+        if hasattr(self.server, "running") and self.server.running:
+            self.server.stop()
+            self.server.running = False
+            #idaapi.msg("[MCP] Server stopped.\n")
+        else:
+            self.server.start()
+            self.server.running = True
+            idaapi.msg("[MCP] Server started.\n")
 
     def term(self):
         self.server.stop()
