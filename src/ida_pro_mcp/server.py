@@ -13,11 +13,13 @@ from mcp.server.fastmcp import FastMCP
 mcp = FastMCP("github.com/mrexodia/ida-pro-mcp", log_level="ERROR")
 
 jsonrpc_request_id = 1
+ida_host = "127.0.0.1"
+ida_port = 13337
 
 def make_jsonrpc_request(method: str, *params):
     """Make a JSON-RPC request to the IDA plugin"""
-    global jsonrpc_request_id
-    conn = http.client.HTTPConnection("localhost", 13337)
+    global jsonrpc_request_id, ida_host, ida_port
+    conn = http.client.HTTPConnection(ida_host, ida_port)
     request = {
         "jsonrpc": "2.0",
         "method": method,
@@ -71,6 +73,7 @@ class MCPVisitor(ast.NodeVisitor):
         self.types: dict[str, ast.ClassDef] = {}
         self.functions: dict[str, ast.FunctionDef] = {}
         self.descriptions: dict[str, str] = {}
+        self.unsafe: set[str] = set()
 
     def visit_FunctionDef(self, node):
         for decorator in node.decorator_list:
@@ -134,7 +137,10 @@ class MCPVisitor(ast.NodeVisitor):
                         )
                     ]
                     node_nobody = ast.FunctionDef(node.name, node.args, new_body, decorator_list, node.returns, node.type_comment, lineno=node.lineno, col_offset=node.col_offset)
+                    assert node.name not in self.functions, f"Duplicate function: {node.name}"
                     self.functions[node.name] = node_nobody
+                elif decorator.id == "unsafe":
+                    self.unsafe.add(node.name)
 
     def visit_ClassDef(self, node):
         for base in node.bases:
@@ -174,6 +180,7 @@ with open(GENERATED_PY, "w") as f:
 exec(compile(code, GENERATED_PY, "exec"))
 
 MCP_FUNCTIONS = ["check_connection"] + list(visitor.functions.keys())
+UNSAFE_FUNCTIONS = visitor.unsafe
 
 def generate_readme():
     print("README:")
@@ -349,12 +356,15 @@ def install_ida_plugin(*, uninstall: bool = False, quiet: bool = False):
                 print(f"Installed IDA Pro plugin (IDA restart required)\n  Plugin: {plugin_destination}")
 
 def main():
+    global ida_host, ida_port
     parser = argparse.ArgumentParser(description="IDA Pro MCP Server")
     parser.add_argument("--install", action="store_true", help="Install the MCP Server and IDA plugin")
     parser.add_argument("--uninstall", action="store_true", help="Uninstall the MCP Server and IDA plugin")
     parser.add_argument("--generate-docs", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--install-plugin", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("--transport", type=str, default="stdio", help="Transport protocol to use (stdio or http://127.0.0.1:8744)")
+    parser.add_argument("--transport", type=str, default="stdio", help="MCP transport protocol to use (stdio or http://127.0.0.1:8744)")
+    parser.add_argument("--ida-rpc", type=str, default=f"http://{ida_host}:{ida_port}", help=f"IDA RPC server to use (default: http://{ida_host}:{ida_port})")
+    parser.add_argument("--unsafe", action="store_true", help="Enable unsafe functions (DANGEROUS)")
     args = parser.parse_args()
 
     if args.install and args.uninstall:
@@ -380,11 +390,27 @@ def main():
     if args.install_plugin:
         install_ida_plugin(quiet=True)
 
+    # Parse IDA RPC server argument
+    ida_rpc = urlparse(args.ida_rpc)
+    if ida_rpc.hostname is None or ida_rpc.port is None:
+        raise Exception(f"Invalid IDA RPC server: {args.ida_rpc}")
+    ida_host = ida_rpc.hostname
+    ida_port = ida_rpc.port
+
+    # Remove unsafe tools
+    if not args.unsafe:
+        mcp_tools = mcp._tool_manager._tools
+        for unsafe in UNSAFE_FUNCTIONS:
+            if unsafe in mcp_tools:
+                del mcp_tools[unsafe]
+
     try:
         if args.transport == "stdio":
             mcp.run(transport="stdio")
         else:
             url = urlparse(args.transport)
+            if url.hostname is None or url.port is None:
+                raise Exception(f"Invalid transport URL: {args.transport}")
             mcp.settings.host = url.hostname
             mcp.settings.port = url.port
             # NOTE: npx @modelcontextprotocol/inspector for debugging
