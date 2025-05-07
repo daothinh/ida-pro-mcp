@@ -14,6 +14,7 @@ mcp = FastMCP("github.com/mrexodia/ida-pro-mcp", log_level="ERROR")
 
 jsonrpc_request_id = 1
 ida_host = "127.0.0.1"
+# ida_host = "192.168.124.244"
 ida_port = 13337
 
 def make_jsonrpc_request(method: str, *params):
