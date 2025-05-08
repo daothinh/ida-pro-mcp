@@ -189,7 +189,8 @@ class MCPHTTPServer(http.server.HTTPServer):
     allow_reuse_address = False
 
 class Server:
-    HOST = "localhost"
+    # HOST = "localhost"
+    HOST = "0.0.0.0"
     PORT = 13337
 
     def __init__(self):
