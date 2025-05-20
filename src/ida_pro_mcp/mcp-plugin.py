@@ -609,8 +609,12 @@ def paginate(data: list[T], offset: int, count: int) -> Page[T]:
     }
 
 def pattern_filter(data: list[T], pattern: str, key: str) -> list[T]:
+    if not pattern:
+        return data
+
+    # TODO: implement /regex/ matching
+
     def matches(item: T) -> bool:
-        # TODO: proper pattern matching
         return pattern.lower() in item[key].lower()
     return list(filter(matches, data))
 
@@ -630,12 +634,12 @@ class Global(TypedDict):
 
 @jsonrpc
 @idaread
-def list_globals(
-    filter: Annotated[str, "Filter to apply to the list. Case-insensitive contains or /regex/ syntax"],
+def list_globals_filter(
     offset: Annotated[int, "Offset to start listing from (start at 0)"],
     count: Annotated[int, "Number of globals to list (100 is a good default, 0 means remainder)"],
+    filter: Annotated[str, "Filter to apply to the list (required parameter, empty string for no filter). Case-insensitive contains or /regex/ syntax"],
 ) -> Page[Global]:
-    """List all globals in the database (paginated)"""
+    """List matching globals in the database (paginated, filtered)"""
     globals = []
     for addr, name in idautils.Names():
         # Skip functions
@@ -647,6 +651,14 @@ def list_globals(
     globals = pattern_filter(globals, filter, "name")
     return paginate(globals, offset, count)
 
+@jsonrpc
+def list_globals(
+    offset: Annotated[int, "Offset to start listing from (start at 0)"],
+    count: Annotated[int, "Number of globals to list (100 is a good default, 0 means remainder)"],
+) -> Page[Global]:
+    """List all globals in the database (paginated)"""
+    return list_globals_filter(offset, count, "")
+
 class String(TypedDict):
     address: str
     length: int
@@ -654,12 +666,12 @@ class String(TypedDict):
 
 @jsonrpc
 @idaread
-def list_strings(
-    filter: Annotated[str, "Filter to apply to the list. Case-insensitive contains or /regex/ syntax"],
+def list_strings_filter(
     offset: Annotated[int, "Offset to start listing from (start at 0)"],
     count: Annotated[int, "Number of strings to list (100 is a good default, 0 means remainder)"],
+    filter: Annotated[str, "Filter to apply to the list (required parameter, empty string for no filter). Case-insensitive contains or /regex/ syntax"],
 ) -> Page[String]:
-    """List all strings in the database (paginated)"""
+    """List matching strings in the database (paginated, filtered)"""
     strings = []
     for item in idautils.Strings():
         try:
@@ -674,6 +686,14 @@ def list_strings(
             continue
     strings = pattern_filter(strings, filter, "string")
     return paginate(strings, offset, count)
+
+@jsonrpc
+def list_strings(
+    offset: Annotated[int, "Offset to start listing from (start at 0)"],
+    count: Annotated[int, "Number of strings to list (100 is a good default, 0 means remainder)"],
+) -> Page[String]:
+    """List all strings in the database (paginated)"""
+    return list_strings_filter(offset, count, "")
 
 def decompile_checked(address: int) -> ida_hexrays.cfunc_t:
     if not ida_hexrays.init_hexrays_plugin():
@@ -777,7 +797,7 @@ def get_xrefs_to_field(
     field_name: Annotated[str, "Name of the field (member) to get xrefs to"],
 ) -> list[Xref]:
     """Get all cross references to a named struct field (member)"""
-    
+
     # Get the type library
     til = ida_typeinf.get_idati()
     if not til:
@@ -1152,9 +1172,7 @@ def list_breakpoints():
 @idaread
 @unsafe
 def dbg_list_breakpoints():
-    """
-    List all breakpoints in the program.
-    """
+    """List all breakpoints in the program."""
     return list_breakpoints()
 
 @jsonrpc
