@@ -3,13 +3,25 @@ import sys
 
 if sys.version_info < (3, 11):
     raise RuntimeError("Python 3.11 or higher is required for the MCP plugin")
-import re
+
 import json
 import struct
 import threading
 import http.server
 from urllib.parse import urlparse
-from typing import Any, Callable, get_type_hints, TypedDict, Optional, Annotated, TypeVar, Generic
+from typing import (
+    Any,
+    Callable,
+    get_type_hints,
+    TypedDict,
+    Optional,
+    Annotated,
+    TypeVar,
+    Generic,
+    NotRequired,
+    overload,
+    Literal,
+)
 
 class JSONRPCError(Exception):
     def __init__(self, code: int, message: str, data: Any = None):
@@ -99,7 +111,7 @@ class JSONRPCRequestHandler(http.server.BaseHTTPRequestHandler):
         response_body = json.dumps(response).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", len(response_body))
+        self.send_header("Content-Length", str(len(response_body)))
         self.end_headers()
         self.wfile.write(response_body)
 
@@ -124,7 +136,7 @@ class JSONRPCRequestHandler(http.server.BaseHTTPRequestHandler):
             return
 
         # Prepare the response
-        response = {
+        response: dict[str, Any] = {
             "jsonrpc": "2.0"
         }
         if request.get("id") is not None:
@@ -177,7 +189,7 @@ class JSONRPCRequestHandler(http.server.BaseHTTPRequestHandler):
 
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", len(response_body))
+        self.send_header("Content-Length", str(len(response_body)))
         self.end_headers()
         self.wfile.write(response_body)
 
@@ -244,6 +256,7 @@ import logging
 import queue
 import traceback
 import functools
+from enum import IntEnum, IntFlag
 
 import ida_hexrays
 import ida_kernwin
@@ -264,6 +277,9 @@ import ida_idd
 import ida_dbg
 import ida_name
 import ida_ida
+import ida_frame
+
+ida_major, ida_minor = map(int, idaapi.get_kernel_version().split("."))
 
 class IDAError(Exception):
     def __init__(self, message: str):
@@ -298,8 +314,7 @@ class IDASyncError(Exception):
 logger = logging.getLogger(__name__)
 
 # Enum for safety modes. Higher means safer:
-class IDASafety:
-    ida_kernwin.MFF_READ
+class IDASafety(IntEnum):
     SAFE_NONE = ida_kernwin.MFF_FAST
     SAFE_READ = ida_kernwin.MFF_READ
     SAFE_WRITE = ida_kernwin.MFF_WRITE
@@ -355,7 +370,7 @@ def idawrite(f):
     @functools.wraps(f)
     def wrapper(*args, **kwargs):
         ff = functools.partial(f, *args, **kwargs)
-        ff.__name__ = f.__name__
+        ff.__name__ = f.__name__ # type: ignore
         return sync_wrapper(ff, idaapi.MFF_WRITE)
     return wrapper
 
@@ -369,7 +384,7 @@ def idaread(f):
     @functools.wraps(f)
     def wrapper(*args, **kwargs):
         ff = functools.partial(f, *args, **kwargs)
-        ff.__name__ = f.__name__
+        ff.__name__ = f.__name__ # type: ignore
         return sync_wrapper(ff, idaapi.MFF_READ)
     return wrapper
 
@@ -399,10 +414,10 @@ class Metadata(TypedDict):
     crc32: str
     filesize: str
 
-def get_image_size():
+def get_image_size() -> int:
     try:
         # https://www.hex-rays.com/products/ida/support/sdkdoc/structidainfo.html
-        info = idaapi.get_inf_structure()
+        info = idaapi.get_inf_structure() # type: ignore
         omin_ea = info.omin_ea
         omax_ea = info.omax_ea
     except AttributeError:
@@ -427,17 +442,16 @@ def get_metadata() -> Metadata:
         try:
             return f().hex()
         except:
-            return None
-    return {
-        "path": idaapi.get_input_file_path(),
-        "module": idaapi.get_root_filename(),
-        "base": hex(idaapi.get_imagebase()),
-        "size": hex(get_image_size()),
-        "md5": hash(ida_nalt.retrieve_input_file_md5),
-        "sha256": hash(ida_nalt.retrieve_input_file_sha256),
-        "crc32": hex(ida_nalt.retrieve_input_file_crc32()),
-        "filesize": hex(ida_nalt.retrieve_input_file_size()),
-    }
+            return ""
+
+    return Metadata(path=idaapi.get_input_file_path(),
+                    module=idaapi.get_root_filename(),
+                    base=hex(idaapi.get_imagebase()),
+                    size=hex(get_image_size()),
+                    md5=hash(ida_nalt.retrieve_input_file_md5),
+                    sha256=hash(ida_nalt.retrieve_input_file_sha256),
+                    crc32=hex(ida_nalt.retrieve_input_file_crc32()),
+                    filesize=hex(ida_nalt.retrieve_input_file_size()))
 
 def get_prototype(fn: ida_funcs.func_t) -> Optional[str]:
     try:
@@ -463,7 +477,9 @@ class Function(TypedDict):
     name: str
     size: str
 
-def parse_address(address: str) -> int:
+def parse_address(address: str | int) -> int:
+    if isinstance(address, int):
+        return address
     try:
         return int(address, 0)
     except ValueError:
@@ -472,7 +488,16 @@ def parse_address(address: str) -> int:
                 raise IDAError(f"Failed to parse address: {address}")
         raise IDAError(f"Failed to parse address (missing 0x prefix): {address}")
 
-def get_function(address: int, *, raise_error=True) -> Function:
+@overload
+def get_function(address: int, *, raise_error: Literal[True]) -> Function: ...
+
+@overload
+def get_function(address: int) -> Function: ...
+
+@overload
+def get_function(address: int, *, raise_error: Literal[False]) -> Optional[Function]: ...
+
+def get_function(address, *, raise_error=True):
     fn = idaapi.get_func(address)
     if fn is None:
         if raise_error:
@@ -483,11 +508,8 @@ def get_function(address: int, *, raise_error=True) -> Function:
         name = fn.get_name()
     except AttributeError:
         name = ida_funcs.get_func_name(fn.start_ea)
-    return {
-        "address": hex(fn.start_ea),
-        "name": name,
-        "size": hex(fn.end_ea - fn.start_ea),
-    }
+
+    return Function(address=hex(address), name=name, size=hex(fn.end_ea - fn.start_ea))
 
 DEMANGLED_TO_EA = {}
 
@@ -501,6 +523,72 @@ def create_demangled_to_ea_map():
             idc.get_name(ea, 0), idaapi.MNG_NODEFINIT)
         if demangled:
             DEMANGLED_TO_EA[demangled] = ea
+
+def get_type_by_name(type_name: str) -> ida_typeinf.tinfo_t:
+    # 8-bit integers
+    if type_name in ('int8', '__int8', 'int8_t', 'char', 'signed char'):
+        return ida_typeinf.tinfo_t(ida_typeinf.BTF_INT8)
+    elif type_name in ('uint8', '__uint8', 'uint8_t', 'unsigned char', 'byte', 'BYTE'):
+        return ida_typeinf.tinfo_t(ida_typeinf.BTF_UINT8)
+
+    # 16-bit integers
+    elif type_name in ('int16', '__int16', 'int16_t', 'short', 'short int', 'signed short', 'signed short int'):
+        return ida_typeinf.tinfo_t(ida_typeinf.BTF_INT16)
+    elif type_name in ('uint16', '__uint16', 'uint16_t', 'unsigned short', 'unsigned short int', 'word', 'WORD'):
+        return ida_typeinf.tinfo_t(ida_typeinf.BTF_UINT16)
+
+    # 32-bit integers
+    elif type_name in ('int32', '__int32', 'int32_t', 'int', 'signed int', 'long', 'long int', 'signed long', 'signed long int'):
+        return ida_typeinf.tinfo_t(ida_typeinf.BTF_INT32)
+    elif type_name in ('uint32', '__uint32', 'uint32_t', 'unsigned int', 'unsigned long', 'unsigned long int', 'dword', 'DWORD'):
+        return ida_typeinf.tinfo_t(ida_typeinf.BTF_UINT32)
+
+    # 64-bit integers
+    elif type_name in ('int64', '__int64', 'int64_t', 'long long', 'long long int', 'signed long long', 'signed long long int'):
+        return ida_typeinf.tinfo_t(ida_typeinf.BTF_INT64)
+    elif type_name in ('uint64', '__uint64', 'uint64_t', 'unsigned int64', 'unsigned long long', 'unsigned long long int', 'qword', 'QWORD'):
+        return ida_typeinf.tinfo_t(ida_typeinf.BTF_UINT64)
+
+    # 128-bit integers
+    elif type_name in ('int128', '__int128', 'int128_t', '__int128_t'):
+        return ida_typeinf.tinfo_t(ida_typeinf.BTF_INT128)
+    elif type_name in ('uint128', '__uint128', 'uint128_t', '__uint128_t', 'unsigned int128'):
+        return ida_typeinf.tinfo_t(ida_typeinf.BTF_UINT128)
+
+    # Floating point types
+    elif type_name in ('float', ):
+        return ida_typeinf.tinfo_t(ida_typeinf.BTF_FLOAT)
+    elif type_name in ('double', ):
+        return ida_typeinf.tinfo_t(ida_typeinf.BTF_DOUBLE)
+    elif type_name in ('long double', 'ldouble'):
+        return ida_typeinf.tinfo_t(ida_typeinf.BTF_LDOUBLE)
+
+    # Boolean type
+    elif type_name in ('bool', '_Bool', 'boolean'):
+        return ida_typeinf.tinfo_t(ida_typeinf.BTF_BOOL)
+
+    # Void type
+    elif type_name in ('void', ):
+        return ida_typeinf.tinfo_t(ida_typeinf.BTF_VOID)
+
+    # If not a standard type, try to get a named type
+    tif = ida_typeinf.tinfo_t()
+    if tif.get_named_type(None, type_name, ida_typeinf.BTF_STRUCT):
+        return tif
+
+    if tif.get_named_type(None, type_name, ida_typeinf.BTF_TYPEDEF):
+        return tif
+
+    if tif.get_named_type(None, type_name, ida_typeinf.BTF_ENUM):
+        return tif
+
+    if tif.get_named_type(None, type_name, ida_typeinf.BTF_UNION):
+        return tif
+
+    if tif := ida_typeinf.tinfo_t(type_name):
+        return tif
+
+    raise IDAError(f"Unable to retrieve {type_name} type info object")
 
 @jsonrpc
 @idaread
@@ -583,13 +671,13 @@ def convert_number(
             ascii = None
             break
 
-    return {
-        "decimal": str(value),
-        "hexadecimal": hex(value),
-        "bytes": bytes.hex(" "),
-        "ascii": ascii,
-        "binary": bin(value),
-    }
+    return ConvertedNumber(
+        decimal=str(value),
+        hexadecimal=hex(value),
+        bytes=bytes.hex(" "),
+        ascii=ascii,
+        binary=bin(value),
+    )
 
 T = TypeVar("T")
 
@@ -614,7 +702,7 @@ def pattern_filter(data: list[T], pattern: str, key: str) -> list[T]:
 
     # TODO: implement /regex/ matching
 
-    def matches(item: T) -> bool:
+    def matches(item) -> bool:
         return pattern.lower() in item[key].lower()
     return list(filter(matches, data))
 
@@ -640,14 +728,12 @@ def list_globals_filter(
     filter: Annotated[str, "Filter to apply to the list (required parameter, empty string for no filter). Case-insensitive contains or /regex/ syntax"],
 ) -> Page[Global]:
     """List matching globals in the database (paginated, filtered)"""
-    globals = []
+    globals: list[Global] = []
     for addr, name in idautils.Names():
-        # Skip functions
-        if not idaapi.get_func(addr):
-            globals.append({
-                "address": hex(addr),
-                "name": name,
-            })
+        # Skip functions and none
+        if not idaapi.get_func(addr) or name is None:
+            globals += [Global(address=hex(addr), name=name)]
+
     globals = pattern_filter(globals, filter, "name")
     return paginate(globals, offset, count)
 
@@ -658,6 +744,39 @@ def list_globals(
 ) -> Page[Global]:
     """List all globals in the database (paginated)"""
     return list_globals_filter(offset, count, "")
+
+class Import(TypedDict):
+    address: str
+    imported_name: str
+    module: str
+
+@jsonrpc
+@idaread
+def list_imports(
+        offset: Annotated[int, "Offset to start listing from (start at 0)"],
+        count: Annotated[int, "Number of imports to list (100 is a good default, 0 means remainder)"],
+) -> Page[Import]:
+    """ List all imported symbols with their name and module (paginated) """
+    nimps = ida_nalt.get_import_module_qty()
+
+    rv = []
+    for i in range(nimps):
+        module_name = ida_nalt.get_import_module_name(i)
+        if not module_name:
+            module_name = "<unnamed>"
+
+        def imp_cb(ea, symbol_name, ordinal, acc):
+            if not symbol_name:
+                symbol_name = f"#{ordinal}"
+
+            acc += [Import(address=hex(ea), imported_name=symbol_name, module=module_name)]
+
+            return True
+
+        imp_cb_w_context = lambda ea, symbol_name, ordinal: imp_cb(ea, symbol_name, ordinal, rv)
+        ida_nalt.enum_import_names(i, imp_cb_w_context)
+
+    return paginate(rv, offset, count)
 
 class String(TypedDict):
     address: str
@@ -672,16 +791,16 @@ def list_strings_filter(
     filter: Annotated[str, "Filter to apply to the list (required parameter, empty string for no filter). Case-insensitive contains or /regex/ syntax"],
 ) -> Page[String]:
     """List matching strings in the database (paginated, filtered)"""
-    strings = []
+    strings: list[String] = []
     for item in idautils.Strings():
+        if item is None:
+            continue
         try:
             string = str(item)
             if string:
-                strings.append({
-                    "address": hex(item.ea),
-                    "length": item.length,
-                    "string": string,
-                })
+                strings += [
+                    String(address=hex(item.ea), length=item.length, string=string),
+                ]
         except:
             continue
     strings = pattern_filter(strings, filter, "string")
@@ -695,19 +814,58 @@ def list_strings(
     """List all strings in the database (paginated)"""
     return list_strings_filter(offset, count, "")
 
+@jsonrpc
+@idaread
+def list_local_types():
+    """List all Local types in the database"""
+    error = ida_hexrays.hexrays_failure_t()
+    locals = []
+    idati = ida_typeinf.get_idati()
+    type_count = ida_typeinf.get_ordinal_limit(idati)
+    for ordinal in range(1, type_count):
+        try:
+            tif = ida_typeinf.tinfo_t()
+            if tif.get_numbered_type(idati, ordinal):
+                type_name = tif.get_type_name()
+                if not type_name:
+                    type_name = f"<Anonymous Type #{ordinal}>"
+                locals.append(f"\nType #{ordinal}: {type_name}")
+                if tif.is_udt():
+                    c_decl_flags = (ida_typeinf.PRTYPE_MULTI | ida_typeinf.PRTYPE_TYPE | ida_typeinf.PRTYPE_SEMI | ida_typeinf.PRTYPE_DEF | ida_typeinf.PRTYPE_METHODS | ida_typeinf.PRTYPE_OFFSETS)
+                    c_decl_output = tif._print(None, c_decl_flags)
+                    if c_decl_output:
+                        locals.append(f"  C declaration:\n{c_decl_output}")
+                else:
+                    simple_decl = tif._print(None, ida_typeinf.PRTYPE_1LINE | ida_typeinf.PRTYPE_TYPE | ida_typeinf.PRTYPE_SEMI)
+                    if simple_decl:
+                        locals.append(f"  Simple declaration:\n{simple_decl}")
+            else:
+                message = f"\nType #{ordinal}: Failed to retrieve information."
+                if error.str:
+                    message += f": {error.str}"
+                if error.errea != idaapi.BADADDR:
+                    message += f"from (address: {hex(error.errea)})"
+                raise IDAError(message)
+        except:
+            continue
+    return locals
+
 def decompile_checked(address: int) -> ida_hexrays.cfunc_t:
     if not ida_hexrays.init_hexrays_plugin():
         raise IDAError("Hex-Rays decompiler is not available")
     error = ida_hexrays.hexrays_failure_t()
-    cfunc: ida_hexrays.cfunc_t = ida_hexrays.decompile_func(address, error, ida_hexrays.DECOMP_WARNINGS)
+    cfunc = ida_hexrays.decompile_func(address, error, ida_hexrays.DECOMP_WARNINGS)
     if not cfunc:
+        if error.code == ida_hexrays.MERR_LICENSE:
+            raise IDAError("Decompiler license is not available. Use `disassemble_function` to get the assembly code instead.")
+
         message = f"Decompilation failed at {hex(address)}"
         if error.str:
             message += f": {error.str}"
         if error.errea != idaapi.BADADDR:
             message += f" (address: {hex(error.errea)})"
         raise IDAError(message)
-    return cfunc
+    return cfunc # type: ignore (this is a SWIG issue)
 
 @jsonrpc
 @idaread
@@ -715,23 +873,25 @@ def decompile_function(
     address: Annotated[str, "Address of the function to decompile"],
 ) -> str:
     """Decompile a function at the given address"""
-    address = parse_address(address)
-    cfunc = decompile_checked(address)
+    start = parse_address(address)
+    cfunc = decompile_checked(start)
     if is_window_active():
-        ida_hexrays.open_pseudocode(address, ida_hexrays.OPF_REUSE)
+        ida_hexrays.open_pseudocode(start, ida_hexrays.OPF_REUSE)
     sv = cfunc.get_pseudocode()
     pseudocode = ""
     for i, sl in enumerate(sv):
         sl: ida_kernwin.simpleline_t
         item = ida_hexrays.ctree_item_t()
         addr = None if i > 0 else cfunc.entry_ea
-        if cfunc.get_line_item(sl.line, 0, False, None, item, None):
-            ds = item.dstr().split(": ")
-            if len(ds) == 2:
-                try:
-                    addr = int(ds[0], 16)
-                except ValueError:
-                    pass
+        if cfunc.get_line_item(sl.line, 0, False, None, item, None): # type: ignore (IDA SDK type hint wrong)
+            dstr: str | None = item.dstr()
+            if dstr:
+                ds = dstr.split(": ")
+                if len(ds) == 2:
+                    try:
+                        addr = int(ds[0], 16)
+                    except ValueError:
+                        pass
         line = ida_lines.tag_remove(sl.line)
         if len(pseudocode) > 0:
             pseudocode += "\n"
@@ -742,32 +902,108 @@ def decompile_function(
 
     return pseudocode
 
+class DisassemblyLine(TypedDict):
+    segment: NotRequired[str]
+    address: str
+    label: NotRequired[str]
+    instruction: str
+    comments: NotRequired[list[str]]
+
+class Argument(TypedDict):
+    name: str
+    type: str
+
+class StackFrameVariable(TypedDict):
+    name: str
+    offset: str
+    size: str
+    type: str
+
+class DisassemblyFunction(TypedDict):
+    name: str
+    start_ea: str
+    return_type: NotRequired[str]
+    arguments: NotRequired[list[Argument]]
+    stack_frame: list[StackFrameVariable]
+    lines: list[DisassemblyLine]
+
 @jsonrpc
 @idaread
 def disassemble_function(
     start_address: Annotated[str, "Address of the function to disassemble"],
-) -> str:
-    """Get assembly code (address: instruction; comment) for a function"""
+) -> DisassemblyFunction:
+    """Get assembly code for a function (API-compatible with older IDA builds)"""
     start = parse_address(start_address)
     func = idaapi.get_func(start)
     if not func:
-        raise IDAError(f"No function found containing address {start_address}")
+        raise IDAError(f"No function found at address {hex(start)}")
     if is_window_active():
         ida_kernwin.jumpto(start)
 
-    # TODO: add labels and limit the maximum number of instructions
-    disassembly = ""
-    for address in ida_funcs.func_item_iterator_t(func):
-        if len(disassembly) > 0:
-            disassembly += "\n"
-        disassembly += f"{hex(address)}: "
-        disassembly += idaapi.generate_disasm_line(address, idaapi.GENDSM_REMOVE_TAGS)
-        comment = idaapi.get_cmt(address, False)
-        if not comment:
-            comment = idaapi.get_cmt(address, True)
-        if comment:
-            disassembly += f"; {comment}"
-    return disassembly
+    func_name: str = ida_funcs.get_func_name(func.start_ea) or "<unnamed>"
+
+    lines: list[DisassemblyLine] = []
+    for ea in idautils.FuncItems(func.start_ea):
+        if ea == idaapi.BADADDR:
+            continue
+
+        seg = idaapi.getseg(ea)
+        segment: str | None = idaapi.get_segm_name(seg) if seg else None
+
+        label: str | None = idc.get_name(ea, 0)
+        if not label or (label == func_name and ea == func.start_ea):
+            label = None
+
+        comments: list[str] = []
+        c: str | None = idaapi.get_cmt(ea, False)
+        if c:
+            comments.append(c)
+        c = idaapi.get_cmt(ea, True)
+        if c:
+            comments.append(c)
+
+        mnem: str = idc.print_insn_mnem(ea) or ""
+        ops: list[str] = []
+        for n in range(8):
+            if idc.get_operand_type(ea, n) == idaapi.o_void:
+                break
+            ops.append(idc.print_operand(ea, n) or "")
+        instruction = f"{mnem} {', '.join(ops)}".rstrip()
+
+        line: DisassemblyLine = {
+            "address": hex(ea),
+            "instruction": instruction
+        }
+        if segment:
+            line["segment"] = segment
+        if label:
+            line["label"] = label
+        if comments:
+            line["comments"] = comments
+        lines.append(line)
+
+    # prototype and args via tinfo (safe across versions)
+    rettype = None
+    args: Optional[list[Argument]] = None
+    tif = ida_typeinf.tinfo_t()
+    if ida_nalt.get_tinfo(tif, func.start_ea) and tif.is_func():
+        ftd = ida_typeinf.func_type_data_t()
+        if tif.get_func_details(ftd):
+            rettype = str(ftd.rettype)
+            args = [Argument(name=(a.name or f"arg{i}"), type=str(a.type))
+                    for i, a in enumerate(ftd)]
+
+    out: DisassemblyFunction = {
+        "name": func_name,
+        "start_ea": hex(func.start_ea),
+        "stack_frame": get_stack_frame_variables_internal(func.start_ea, False),
+        "lines": lines,
+    }
+    if rettype:
+        out["return_type"] = rettype
+    if args is not None:
+        out["arguments"] = args
+    return out
 
 class Xref(TypedDict):
     address: str
@@ -782,12 +1018,12 @@ def get_xrefs_to(
     """Get all cross references to the given address"""
     xrefs = []
     xref: ida_xref.xrefblk_t
-    for xref in idautils.XrefsTo(parse_address(address)):
-        xrefs.append({
-            "address": hex(xref.frm),
-            "type": "code" if xref.iscode else "data",
-            "function": get_function(xref.frm, raise_error=False),
-        })
+    for xref in idautils.XrefsTo(parse_address(address)): # type: ignore (IDA SDK type hints are incorrect)
+        xrefs += [
+            Xref(address=hex(xref.frm),
+                 type="code" if xref.iscode else "data",
+                 function=get_function(xref.frm, raise_error=False))
+        ]
     return xrefs
 
 @jsonrpc
@@ -810,7 +1046,7 @@ def get_xrefs_to_field(
         return []
 
     # Get The field index
-    idx = ida_typeinf.get_udm_by_fullname(None, struct_name + '.' + field_name)
+    idx = ida_typeinf.get_udm_by_fullname(None, struct_name + '.' + field_name) # type: ignore (IDA SDK type hints are incorrect)
     if idx == -1:
         print(f"Field '{field_name}' not found in structure '{struct_name}'.")
         return []
@@ -823,13 +1059,74 @@ def get_xrefs_to_field(
     # Get xrefs to the tid
     xrefs = []
     xref: ida_xref.xrefblk_t
-    for xref in idautils.XrefsTo(tid):
-        xrefs.append({
-            "address": hex(xref.frm),
-            "type": "code" if xref.iscode else "data",
-            "function": get_function(xref.frm, raise_error=False),
-        })
+    for xref in idautils.XrefsTo(tid): # type: ignore (IDA SDK type hints are incorrect)
+        xrefs += [
+            Xref(address=hex(xref.frm),
+                 type="code" if xref.iscode else "data",
+                 function=get_function(xref.frm, raise_error=False))
+        ]
     return xrefs
+
+@jsonrpc
+@idaread
+def get_callees(
+    function_address: Annotated[str, "Address of the function to get callee functions"],
+) -> list[dict[str, str]]:
+    """Get all the functions called (callees) by the function at function_address"""
+    func_start = parse_address(function_address)
+    func = idaapi.get_func(func_start)
+    if not func:
+        raise IDAError(f"No function found containing address {function_address}")
+    func_end = idc.find_func_end(func_start)
+    callees: list[dict[str, str]] = []
+    current_ea = func_start
+    while current_ea < func_end:
+        insn = idaapi.insn_t()
+        idaapi.decode_insn(insn, current_ea)
+        if insn.itype in [idaapi.NN_call, idaapi.NN_callfi, idaapi.NN_callni]:
+            target = idc.get_operand_value(current_ea, 0)
+            target_type = idc.get_operand_type(current_ea, 0)
+            # check if it's a direct call - avoid getting the indirect call offset
+            if target_type in [idaapi.o_mem, idaapi.o_near, idaapi.o_far]:
+                # in here, we do not use get_function because the target can be external function.
+                # but, we should mark the target as internal/external function.
+                func_type = (
+                    "internal" if idaapi.get_func(target) is not None else "external"
+                )
+                func_name = idc.get_name(target)
+                if func_name is not None:
+                    callees.append(
+                        {"address": hex(target), "name": func_name, "type": func_type}
+                    )
+        current_ea = idc.next_head(current_ea, func_end)
+
+    # deduplicate callees
+    unique_callee_tuples = {tuple(callee.items()) for callee in callees}
+    unique_callees = [dict(callee) for callee in unique_callee_tuples]
+    return unique_callees  # type: ignore
+
+@jsonrpc
+@idaread
+def get_callers(
+    function_address: Annotated[str, "Address of the function to get callers"],
+) -> list[Function]:
+    """Get all callers of the given address"""
+    callers = {}
+    for caller_address in idautils.CodeRefsTo(parse_address(function_address), 0):
+        # validate the xref address is a function
+        func = get_function(caller_address, raise_error=False)
+        if not func:
+            continue
+        # load the instruction at the xref address
+        insn = idaapi.insn_t()
+        idaapi.decode_insn(insn, caller_address)
+        # check the instruction is a call
+        if insn.itype not in [idaapi.NN_call, idaapi.NN_callfi, idaapi.NN_callni]:
+            continue
+        # deduplicate callers by address
+        callers[func["address"]] = func
+
+    return list(callers.values())
 
 @jsonrpc
 @idaread
@@ -851,26 +1148,33 @@ def set_comment(
     comment: Annotated[str, "Comment text"],
 ):
     """Set a comment for a given address in the function disassembly and pseudocode"""
-    address = parse_address(address)
+    ea = parse_address(address)
 
-    if not idaapi.set_cmt(address, comment, False):
-        raise IDAError(f"Failed to set disassembly comment at {hex(address)}")
+    if not idaapi.set_cmt(ea, comment, False):
+        raise IDAError(f"Failed to set disassembly comment at {hex(ea)}")
+
+    if not ida_hexrays.init_hexrays_plugin():
+        return
 
     # Reference: https://cyber.wtf/2019/03/22/using-ida-python-to-analyze-trickbot/
     # Check if the address corresponds to a line
-    cfunc = decompile_checked(address)
+    try:
+        cfunc = decompile_checked(ea)
+    except IDAError:
+        # Skip decompiler comment if decompilation fails
+        return
 
     # Special case for function entry comments
-    if address == cfunc.entry_ea:
-        idc.set_func_cmt(address, comment, True)
+    if ea == cfunc.entry_ea:
+        idc.set_func_cmt(ea, comment, True)
         cfunc.refresh_func_ctext()
         return
 
     eamap = cfunc.get_eamap()
-    if address not in eamap:
-        print(f"Failed to set decompiler comment at {hex(address)}")
+    if ea not in eamap:
+        print(f"Failed to set decompiler comment at {hex(ea)}")
         return
-    nearest_ea = eamap[address][0].ea
+    nearest_ea = eamap[ea][0].ea
 
     # Remove existing orphan comments
     if cfunc.has_orphan_cmts():
@@ -889,7 +1193,7 @@ def set_comment(
             return
         cfunc.del_orphan_cmts()
         cfunc.save_user_cmts()
-    print(f"Failed to set decompiler comment at {hex(address)}")
+    print(f"Failed to set decompiler comment at {hex(ea)}")
 
 def refresh_decompiler_widget():
     widget = ida_kernwin.get_current_widget()
@@ -939,11 +1243,99 @@ def set_global_variable_type(
 ):
     """Set a global variable's type"""
     ea = idaapi.get_name_ea(idaapi.BADADDR, variable_name)
-    tif = ida_typeinf.tinfo_t(new_type, None, ida_typeinf.PT_SIL)
+    tif = get_type_by_name(new_type)
     if not tif:
         raise IDAError(f"Parsed declaration is not a variable type")
     if not ida_typeinf.apply_tinfo(ea, tif, ida_typeinf.PT_SIL):
         raise IDAError(f"Failed to apply type")
+
+def patch_address_assemble(
+    ea: int,
+    assemble: str,
+) -> int:
+    """Patch Address Assemble"""
+    (check_assemble, bytes_to_patch) = idautils.Assemble(ea, assemble)
+    if check_assemble == False:
+        raise IDAError(f"Failed to assemble instruction: {assemble}")
+    try:
+        ida_bytes.patch_bytes(ea, bytes_to_patch)
+    except:
+        raise IDAError(f"Failed to patch bytes at address {hex(ea)}")
+
+    return len(bytes_to_patch)
+
+@jsonrpc
+@idawrite
+def patch_address_assembles(
+    address: Annotated[str, "Starting Address to apply patch"],
+    instructions: Annotated[str, "Assembly instructions separated by ';'"],
+) -> str:
+    ea = parse_address(address)
+    assembles = instructions.split(";")
+    for assemble in assembles:
+        assemble = assemble.strip()
+        try:
+            patch_bytes_len = patch_address_assemble(ea, assemble)
+        except IDAError as e:
+            raise IDAError(f"Failed to patch bytes at address {hex(ea)}: {e}")
+        ea += patch_bytes_len
+    return f"Patched {len(assembles)} instructions"
+
+@jsonrpc
+@idaread
+def get_global_variable_value_by_name(variable_name: Annotated[str, "Name of the global variable"]) -> str:
+    """
+    Read a global variable's value (if known at compile-time)
+
+    Prefer this function over the `data_read_*` functions.
+    """
+    ea = idaapi.get_name_ea(idaapi.BADADDR, variable_name)
+    if ea == idaapi.BADADDR:
+        raise IDAError(f"Global variable {variable_name} not found")
+
+    return get_global_variable_value_internal(ea)
+
+@jsonrpc
+@idaread
+def get_global_variable_value_at_address(address: Annotated[str, "Address of the global variable"]) -> str:
+    """
+    Read a global variable's value by its address (if known at compile-time)
+
+    Prefer this function over the `data_read_*` functions.
+    """
+    ea = parse_address(address)
+    return get_global_variable_value_internal(ea)
+
+def get_global_variable_value_internal(ea: int) -> str:
+     # Get the type information for the variable
+     tif = ida_typeinf.tinfo_t()
+     if not ida_nalt.get_tinfo(tif, ea):
+         # No type info, maybe we can figure out its size by its name
+         if not ida_bytes.has_any_name(ea):
+             raise IDAError(f"Failed to get type information for variable at {ea:#x}")
+
+         size = ida_bytes.get_item_size(ea)
+         if size == 0:
+             raise IDAError(f"Failed to get type information for variable at {ea:#x}")
+     else:
+         # Determine the size of the variable
+         size = tif.get_size()
+
+     # Read the value based on the size
+     if size == 0 and tif.is_array() and tif.get_array_element().is_decl_char():
+         return_string = idaapi.get_strlit_contents(ea, -1, 0).decode("utf-8").strip()
+         return f"\"{return_string}\""
+     elif size == 1:
+         return hex(ida_bytes.get_byte(ea))
+     elif size == 2:
+         return hex(ida_bytes.get_word(ea))
+     elif size == 4:
+         return hex(ida_bytes.get_dword(ea))
+     elif size == 8:
+         return hex(ida_bytes.get_qword(ea))
+     else:
+         # For other sizes, return the raw bytes
+         return ' '.join(hex(x) for x in ida_bytes.get_bytes(ea, size))
 
 @jsonrpc
 @idawrite
@@ -964,7 +1356,7 @@ def rename_function(
 def set_function_prototype(
     function_address: Annotated[str, "Address of the function"],
     prototype: Annotated[str, "New function prototype"],
-) -> str:
+):
     """Set a function's prototype"""
     func = idaapi.get_func(parse_address(function_address))
     if not func:
@@ -985,8 +1377,8 @@ class my_modifier_t(ida_hexrays.user_lvar_modifier_t):
         self.var_name = var_name
         self.new_type = new_type
 
-    def modify_lvars(self, lvars):
-        for lvar_saved in lvars.lvvec:
+    def modify_lvars(self, lvinf):
+        for lvar_saved in lvinf.lvvec:
             lvar_saved: ida_hexrays.lvar_saved_info_t
             if lvar_saved.name == self.var_name:
                 lvar_saved.type = self.new_type
@@ -994,7 +1386,7 @@ class my_modifier_t(ida_hexrays.user_lvar_modifier_t):
         return False
 
 # NOTE: This is extremely hacky, but necessary to get errors out of IDA
-def parse_decls_ctypes(decls: str, hti_flags: int) -> tuple[int, str]:
+def parse_decls_ctypes(decls: str, hti_flags: int) -> tuple[int, list[str]]:
     if sys.platform == "win32":
         import ctypes
 
@@ -1011,7 +1403,7 @@ def parse_decls_ctypes(decls: str, hti_flags: int) -> tuple[int, str]:
         ]
         ida_dll.parse_decls.restype = ctypes.c_int
 
-        messages = []
+        messages: list[str] = []
 
         @ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_char_p, ctypes.c_char_p)
         def magic_printer(fmt: bytes, arg1: bytes):
@@ -1051,7 +1443,7 @@ def declare_c_type(
 @jsonrpc
 @idawrite
 def set_local_variable_type(
-    function_address: Annotated[str, "Address of the function containing the variable"],
+    function_address: Annotated[str, "Address of the decompiled function containing the variable"],
     variable_name: Annotated[str, "Name of the variable"],
     new_type: Annotated[str, "New type for the variable"],
 ):
@@ -1063,7 +1455,7 @@ def set_local_variable_type(
         try:
             new_tif = ida_typeinf.tinfo_t()
             # parse_decl requires semicolon for the type
-            ida_typeinf.parse_decl(new_tif, None, new_type + ";", ida_typeinf.PT_SIL)
+            ida_typeinf.parse_decl(new_tif, None, new_type + ";", ida_typeinf.PT_SIL) # type: ignore (IDA SDK type hints are incorrect)
         except Exception:
             raise IDAError(f"Failed to parse type: {new_type}")
     func = idaapi.get_func(parse_address(function_address))
@@ -1078,23 +1470,525 @@ def set_local_variable_type(
 
 @jsonrpc
 @idaread
-@unsafe
-def dbg_get_registers() -> list[dict[str, str]]:
-    """Get all registers and their values. This function is only available when debugging."""
-    result = []
+def get_stack_frame_variables(
+        function_address: Annotated[str, "Address of the disassembled function to retrieve the stack frame variables"]
+) -> list[StackFrameVariable]:
+    """ Retrieve the stack frame variables for a given function """
+    return get_stack_frame_variables_internal(parse_address(function_address), True)
+
+def get_stack_frame_variables_internal(function_address: int, raise_error: bool) -> list[StackFrameVariable]:
+    # TODO: IDA 8.3 does not support tif.get_type_by_tid
+    if ida_major < 9:
+        return []
+
+    func = idaapi.get_func(function_address)
+    if not func:
+        if raise_error:
+            raise IDAError(f"No function found at address {function_address}")
+        return []
+
+    tif = ida_typeinf.tinfo_t()
+    if not tif.get_type_by_tid(func.frame) or not tif.is_udt():
+        return []
+
+    members: list[StackFrameVariable] = []
+    udt = ida_typeinf.udt_type_data_t()
+    tif.get_udt_details(udt)
+    for udm in udt:
+        if not udm.is_gap():
+            name = udm.name
+            offset = udm.offset // 8
+            size = udm.size // 8
+            type = str(udm.type)
+            members.append(StackFrameVariable(
+                name=name,
+                offset=hex(offset),
+                size=hex(size),
+                type=type
+            ))
+    return members
+
+class StructureMember(TypedDict):
+    name: str
+    offset: str
+    size: str
+    type: str
+
+class StructureDefinition(TypedDict):
+    name: str
+    size: str
+    members: list[StructureMember]
+
+@jsonrpc
+@idaread
+def get_defined_structures() -> list[StructureDefinition]:
+    """ Returns a list of all defined structures """
+
+    rv = []
+    limit = ida_typeinf.get_ordinal_limit()
+    for ordinal in range(1, limit):
+        tif = ida_typeinf.tinfo_t()
+        tif.get_numbered_type(None, ordinal)
+        if tif.is_udt():
+            udt = ida_typeinf.udt_type_data_t()
+            members = []
+            if tif.get_udt_details(udt):
+                members = [
+                    StructureMember(name=x.name,
+                                    offset=hex(x.offset // 8),
+                                    size=hex(x.size // 8),
+                                    type=str(x.type))
+                    for _, x in enumerate(udt)
+                ]
+
+            rv += [StructureDefinition(name=tif.get_type_name(), # type: ignore (IDA SDK type hints are incorrect)
+                                       size=hex(tif.get_size()),
+                                       members=members)]
+
+    return rv
+
+@jsonrpc
+@idaread
+def analyze_struct_detailed(name: Annotated[str, "Name of the structure to analyze"]) -> dict:
+    """Detailed analysis of a structure with all fields"""
+    # Get tinfo object
+    tif = ida_typeinf.tinfo_t()
+    if not tif.get_named_type(None, name):
+        raise IDAError(f"Structure '{name}' not found!")
+
+    result = {
+        "name": name,
+        "type": str(tif._print()),
+        "size": tif.get_size(),
+        "is_udt": tif.is_udt()
+    }
+
+    if not tif.is_udt():
+        result["error"] = "This is not a user-defined type!"
+        return result
+
+    # Get UDT (User Defined Type) details
+    udt_data = ida_typeinf.udt_type_data_t()
+    if not tif.get_udt_details(udt_data):
+        result["error"] = "Failed to get structure details!"
+        return result
+
+    result["member_count"] = udt_data.size()
+    result["is_union"] = udt_data.is_union
+    result["udt_type"] = "Union" if udt_data.is_union else "Struct"
+
+    # Output information about each field
+    members = []
+    for i, member in enumerate(udt_data):
+        offset = member.begin() // 8  # Convert bits to bytes
+        size = member.size // 8 if member.size > 0 else member.type.get_size()
+        member_type = member.type._print()
+        member_name = member.name
+
+        member_info = {
+            "index": i,
+            "offset": f"0x{offset:08X}",
+            "size": size,
+            "type": member_type,
+            "name": member_name,
+            "is_nested_udt": member.type.is_udt()
+        }
+
+        # If this is a nested structure, show additional information
+        if member.type.is_udt():
+            member_info["nested_size"] = member.type.get_size()
+
+        members.append(member_info)
+
+    result["members"] = members
+    result["total_size"] = tif.get_size()
+
+    return result
+
+@jsonrpc
+@idaread
+def get_struct_at_address(address: Annotated[str, "Address to analyze structure at"],
+                         struct_name: Annotated[str, "Name of the structure"]) -> dict:
+    """Get structure field values at a specific address"""
+    addr = parse_address(address)
+
+    # Get structure tinfo
+    tif = ida_typeinf.tinfo_t()
+    if not tif.get_named_type(None, struct_name):
+        raise IDAError(f"Structure '{struct_name}' not found!")
+
+    # Get structure details
+    udt_data = ida_typeinf.udt_type_data_t()
+    if not tif.get_udt_details(udt_data):
+        raise IDAError("Failed to get structure details!")
+
+    result = {
+        "struct_name": struct_name,
+        "address": f"0x{addr:X}",
+        "members": []
+    }
+
+    for member in udt_data:
+        offset = member.begin() // 8
+        member_addr = addr + offset
+        member_type = member.type._print()
+        member_name = member.name
+        member_size = member.type.get_size()
+
+        # Try to get value based on size
+        try:
+            if member.type.is_ptr():
+                # Pointer
+                is_64bit = ida_ida.inf_is_64bit() if ida_major >= 9 else idaapi.get_inf_structure().is_64bit()
+                if is_64bit:
+                    value = idaapi.get_qword(member_addr)
+                    value_str = f"0x{value:016X}"
+                else:
+                    value = idaapi.get_dword(member_addr)
+                    value_str = f"0x{value:08X}"
+            elif member_size == 1:
+                value = idaapi.get_byte(member_addr)
+                value_str = f"0x{value:02X} ({value})"
+            elif member_size == 2:
+                value = idaapi.get_word(member_addr)
+                value_str = f"0x{value:04X} ({value})"
+            elif member_size == 4:
+                value = idaapi.get_dword(member_addr)
+                value_str = f"0x{value:08X} ({value})"
+            elif member_size == 8:
+                value = idaapi.get_qword(member_addr)
+                value_str = f"0x{value:016X} ({value})"
+            else:
+                # For large structures, read first few bytes
+                bytes_data = []
+                for i in range(min(member_size, 16)):
+                    try:
+                        byte_val = idaapi.get_byte(member_addr + i)
+                        bytes_data.append(f"{byte_val:02X}")
+                    except:
+                        break
+                value_str = f"[{' '.join(bytes_data)}{'...' if member_size > 16 else ''}]"
+        except:
+            value_str = "<failed to read>"
+
+        member_info = {
+            "offset": f"0x{offset:08X}",
+            "type": member_type,
+            "name": member_name,
+            "value": value_str
+        }
+
+        result["members"].append(member_info)
+
+    return result
+
+@jsonrpc
+@idaread
+def get_struct_info_simple(name: Annotated[str, "Name of the structure"]) -> dict:
+    """Simple function to get basic structure information"""
+    tif = ida_typeinf.tinfo_t()
+    if not tif.get_named_type(None, name):
+        raise IDAError(f"Structure '{name}' not found!")
+
+    info = {
+        'name': name,
+        'type': tif._print(),
+        'size': tif.get_size(),
+        'is_udt': tif.is_udt()
+    }
+
+    if tif.is_udt():
+        udt_data = ida_typeinf.udt_type_data_t()
+        if tif.get_udt_details(udt_data):
+            info['member_count'] = udt_data.size()
+            info['is_union'] = udt_data.is_union
+
+            members = []
+            for member in udt_data:
+                members.append({
+                    'name': member.name,
+                    'type': member.type._print(),
+                    'offset': member.begin() // 8,
+                    'size': member.type.get_size()
+                })
+            info['members'] = members
+
+    return info
+
+@jsonrpc
+@idaread
+def search_structures(filter: Annotated[str, "Filter pattern to search for structures (case-insensitive)"]) -> list[dict]:
+    """Search for structures by name pattern"""
+    results = []
+    limit = ida_typeinf.get_ordinal_limit()
+
+    for ordinal in range(1, limit):
+        tif = ida_typeinf.tinfo_t()
+        if tif.get_numbered_type(None, ordinal):
+            type_name: str = tif.get_type_name() # type: ignore (IDA SDK type hints are incorrect)
+            if type_name and filter.lower() in type_name.lower():
+                if tif.is_udt():
+                    udt_data = ida_typeinf.udt_type_data_t()
+                    member_count = 0
+                    if tif.get_udt_details(udt_data):
+                        member_count = udt_data.size()
+
+                    results.append({
+                        "name": type_name,
+                        "size": tif.get_size(),
+                        "member_count": member_count,
+                        "is_union": udt_data.is_union if tif.get_udt_details(udt_data) else False,
+                        "ordinal": ordinal
+                    })
+
+    return results
+
+@jsonrpc
+@idawrite
+def rename_stack_frame_variable(
+        function_address: Annotated[str, "Address of the disassembled function to set the stack frame variables"],
+        old_name: Annotated[str, "Current name of the variable"],
+        new_name: Annotated[str, "New name for the variable (empty for a default name)"]
+):
+    """ Change the name of a stack variable for an IDA function """
+    func = idaapi.get_func(parse_address(function_address))
+    if not func:
+        raise IDAError(f"No function found at address {function_address}")
+
+    frame_tif = ida_typeinf.tinfo_t()
+    if not ida_frame.get_func_frame(frame_tif, func):
+        raise IDAError("No frame returned.")
+
+    idx, udm = frame_tif.get_udm(old_name) # type: ignore (IDA SDK type hints are incorrect)
+    if not udm:
+        raise IDAError(f"{old_name} not found.")
+
+    tid = frame_tif.get_udm_tid(idx)
+    if ida_frame.is_special_frame_member(tid):
+        raise IDAError(f"{old_name} is a special frame member. Will not change the name.")
+
+    udm = ida_typeinf.udm_t()
+    frame_tif.get_udm_by_tid(udm, tid)
+    offset = udm.offset // 8
+    if ida_frame.is_funcarg_off(func, offset):
+        raise IDAError(f"{old_name} is an argument member. Will not change the name.")
+
+    sval = ida_frame.soff_to_fpoff(func, offset)
+    if not ida_frame.define_stkvar(func, new_name, sval, udm.type):
+        raise IDAError("failed to rename stack frame variable")
+
+@jsonrpc
+@idawrite
+def create_stack_frame_variable(
+        function_address: Annotated[str, "Address of the disassembled function to set the stack frame variables"],
+        offset: Annotated[str, "Offset of the stack frame variable"],
+        variable_name: Annotated[str, "Name of the stack variable"],
+        type_name: Annotated[str, "Type of the stack variable"]
+):
+    """ For a given function, create a stack variable at an offset and with a specific type """
+
+    func = idaapi.get_func(parse_address(function_address))
+    if not func:
+        raise IDAError(f"No function found at address {function_address}")
+
+    ea = parse_address(offset)
+
+    frame_tif = ida_typeinf.tinfo_t()
+    if not ida_frame.get_func_frame(frame_tif, func):
+        raise IDAError("No frame returned.")
+
+    tif = get_type_by_name(type_name)
+    if not ida_frame.define_stkvar(func, variable_name, ea, tif):
+        raise IDAError("failed to define stack frame variable")
+
+@jsonrpc
+@idawrite
+def set_stack_frame_variable_type(
+        function_address: Annotated[str, "Address of the disassembled function to set the stack frame variables"],
+        variable_name: Annotated[str, "Name of the stack variable"],
+        type_name: Annotated[str, "Type of the stack variable"]
+):
+    """ For a given disassembled function, set the type of a stack variable """
+
+    func = idaapi.get_func(parse_address(function_address))
+    if not func:
+        raise IDAError(f"No function found at address {function_address}")
+
+    frame_tif = ida_typeinf.tinfo_t()
+    if not ida_frame.get_func_frame(frame_tif, func):
+        raise IDAError("No frame returned.")
+
+    idx, udm = frame_tif.get_udm(variable_name) # type: ignore (IDA SDK type hints are incorrect)
+    if not udm:
+        raise IDAError(f"{variable_name} not found.")
+
+    tid = frame_tif.get_udm_tid(idx)
+    udm = ida_typeinf.udm_t()
+    frame_tif.get_udm_by_tid(udm, tid)
+    offset = udm.offset // 8
+
+    tif = get_type_by_name(type_name)
+    if not ida_frame.set_frame_member_type(func, offset, tif):
+        raise IDAError("failed to set stack frame variable type")
+
+@jsonrpc
+@idawrite
+def delete_stack_frame_variable(
+        function_address: Annotated[str, "Address of the function to set the stack frame variables"],
+        variable_name: Annotated[str, "Name of the stack variable"]
+):
+    """ Delete the named stack variable for a given function """
+
+    func = idaapi.get_func(parse_address(function_address))
+    if not func:
+        raise IDAError(f"No function found at address {function_address}")
+
+    frame_tif = ida_typeinf.tinfo_t()
+    if not ida_frame.get_func_frame(frame_tif, func):
+        raise IDAError("No frame returned.")
+
+    idx, udm = frame_tif.get_udm(variable_name) # type: ignore (IDA SDK type hints are incorrect)
+    if not udm:
+        raise IDAError(f"{variable_name} not found.")
+
+    tid = frame_tif.get_udm_tid(idx)
+    if ida_frame.is_special_frame_member(tid):
+        raise IDAError(f"{variable_name} is a special frame member. Will not delete.")
+
+    udm = ida_typeinf.udm_t()
+    frame_tif.get_udm_by_tid(udm, tid)
+    offset = udm.offset // 8
+    size = udm.size // 8
+    if ida_frame.is_funcarg_off(func, offset):
+        raise IDAError(f"{variable_name} is an argument member. Will not delete.")
+
+    if not ida_frame.delete_frame_members(func, offset, offset+size):
+        raise IDAError("failed to delete stack frame variable")
+
+@jsonrpc
+@idaread
+def read_memory_bytes(
+        memory_address: Annotated[str, "Address of the memory value to be read"],
+        size: Annotated[int, "size of memory to read"]
+) -> str:
+    """
+    Read bytes at a given address.
+
+    Only use this function if `get_global_variable_at` and `get_global_variable_by_name`
+    both failed.
+    """
+    return ' '.join(f'{x:#02x}' for x in ida_bytes.get_bytes(parse_address(memory_address), size))
+
+@jsonrpc
+@idaread
+def data_read_byte(
+    address: Annotated[str, "Address to get 1 byte value from"],
+) -> int:
+    """
+    Read the 1 byte value at the specified address.
+
+    Only use this function if `get_global_variable_at` failed.
+    """
+    ea = parse_address(address)
+    return ida_bytes.get_wide_byte(ea)
+
+@jsonrpc
+@idaread
+def data_read_word(
+    address: Annotated[str, "Address to get 2 bytes value from"],
+) -> int:
+    """
+    Read the 2 byte value at the specified address as a WORD.
+
+    Only use this function if `get_global_variable_at` failed.
+    """
+    ea = parse_address(address)
+    return ida_bytes.get_wide_word(ea)
+
+@jsonrpc
+@idaread
+def data_read_dword(
+    address: Annotated[str, "Address to get 4 bytes value from"],
+) -> int:
+    """
+    Read the 4 byte value at the specified address as a DWORD.
+
+    Only use this function if `get_global_variable_at` failed.
+    """
+    ea = parse_address(address)
+    return ida_bytes.get_wide_dword(ea)
+
+@jsonrpc
+@idaread
+def data_read_qword(
+        address: Annotated[str, "Address to get 8 bytes value from"]
+) -> int:
+    """
+    Read the 8 byte value at the specified address as a QWORD.
+
+    Only use this function if `get_global_variable_at` failed.
+    """
+    ea = parse_address(address)
+    return ida_bytes.get_qword(ea)
+
+@jsonrpc
+@idaread
+def data_read_string(
+        address: Annotated[str, "Address to get string from"]
+) -> str:
+    """
+    Read the string at the specified address.
+
+    Only use this function if `get_global_variable_at` failed.
+    """
+    try:
+        return idaapi.get_strlit_contents(parse_address(address),-1,0).decode("utf-8")
+    except Exception as e:
+        return "Error:" + str(e)
+
+class RegisterValue(TypedDict):
+    name: str
+    value: str
+
+class ThreadRegisters(TypedDict):
+    thread_id: int
+    registers: list[RegisterValue]
+
+def dbg_ensure_running() -> "ida_idd.debugger_t":
     dbg = ida_idd.get_dbg()
-    # TODO: raise an exception when not debugging?
+    if not dbg:
+        raise IDAError("Debugger not running")
+    if ida_dbg.get_ip_val() is None:
+        raise IDAError("Debugger not running")
+    return dbg
+
+@jsonrpc
+@idaread
+@unsafe
+def dbg_get_registers() -> list[ThreadRegisters]:
+    """Get all registers and their values. This function is only available when debugging."""
+    result: list[ThreadRegisters] = []
+    dbg = dbg_ensure_running()
     for thread_index in range(ida_dbg.get_thread_qty()):
         tid = ida_dbg.getn_thread(thread_index)
         regs = []
-        regvals = ida_dbg.get_reg_vals(tid)
+        regvals: ida_idd.regvals_t = ida_dbg.get_reg_vals(tid)
         for reg_index, rv in enumerate(regvals):
+            rv: ida_idd.regval_t
             reg_info = dbg.regs(reg_index)
-            reg_value = rv.pyval(reg_info.dtype)
+
+            # NOTE: Apparently this can fail under some circumstances
+            try:
+                reg_value = rv.pyval(reg_info.dtype)
+            except ValueError:
+                reg_value = ida_idaapi.BADADDR
+
             if isinstance(reg_value, int):
                 reg_value = hex(reg_value)
             if isinstance(reg_value, bytes):
                 reg_value = reg_value.hex(" ")
+            else:
+                reg_value = str(reg_value)
             regs.append({
                 "name": reg_info.name,
                 "value": reg_value,
@@ -1150,22 +2044,21 @@ def dbg_get_call_stack() -> list[dict[str, str]]:
         pass
     return callstack
 
+class Breakpoint(TypedDict):
+    ea: str
+    enabled: bool
+    condition: Optional[str]
+
 def list_breakpoints():
-    ea = ida_ida.inf_get_min_ea()
-    end_ea = ida_ida.inf_get_max_ea()
-    breakpoints = []
-    while ea <= end_ea:
+    breakpoints: list[Breakpoint] = []
+    for i in range(ida_dbg.get_bpt_qty()):
         bpt = ida_dbg.bpt_t()
-        if ida_dbg.get_bpt(ea, bpt):
-            breakpoints.append(
-                {
-                    "ea": hex(bpt.ea),
-                    "type": bpt.type,
-                    "enabled": bpt.flags & ida_dbg.BPT_ENABLED,
-                    "condition": bpt.condition if bpt.condition else None,
-                }
-            )
-        ea = ida_bytes.next_head(ea, end_ea)
+        if ida_dbg.getn_bpt(i, bpt):
+            breakpoints.append(Breakpoint(
+                ea=hex(bpt.ea),
+                enabled=bpt.flags & ida_dbg.BPT_ENABLED,
+                condition=str(bpt.condition) if bpt.condition else None,
+            ))
     return breakpoints
 
 @jsonrpc
@@ -1178,48 +2071,65 @@ def dbg_list_breakpoints():
 @jsonrpc
 @idaread
 @unsafe
-def dbg_start_process() -> str:
-    """Start the debugger"""
-    if idaapi.start_process("", "", ""):
-        return "Debugger started"
-    return "Failed to start debugger"
+def dbg_start_process():
+    """Start the debugger, returns the current instruction pointer"""
+
+    if len(list_breakpoints()) == 0:
+        for i in range(ida_entry.get_entry_qty()):
+            ordinal = ida_entry.get_entry_ordinal(i)
+            address = ida_entry.get_entry(ordinal)
+            if address != ida_idaapi.BADADDR:
+                ida_dbg.add_bpt(address, 0, idaapi.BPT_SOFT)
+
+    if idaapi.start_process("", "", "") == 1:
+        ip = ida_dbg.get_ip_val()
+        if ip is not None:
+            return hex(ip)
+    raise IDAError("Failed to start debugger (did the user configure the debugger manually one time?)")
 
 @jsonrpc
 @idaread
 @unsafe
-def dbg_exit_process() -> str:
+def dbg_exit_process():
     """Exit the debugger"""
+    dbg_ensure_running()
     if idaapi.exit_process():
-        return "Debugger exited"
-    return "Failed to exit debugger"
+        return
+    raise IDAError("Failed to exit debugger")
 
 @jsonrpc
 @idaread
 @unsafe
 def dbg_continue_process() -> str:
-    """Continue the debugger"""
+    """Continue the debugger, returns the current instruction pointer"""
+    dbg_ensure_running()
     if idaapi.continue_process():
-        return "Debugger continued"
-    return "Failed to continue debugger"
+        ip = ida_dbg.get_ip_val()
+        if ip is not None:
+            return hex(ip)
+    raise IDAError("Failed to continue debugger")
 
 @jsonrpc
 @idaread
 @unsafe
 def dbg_run_to(
     address: Annotated[str, "Run the debugger to the specified address"],
-) -> str:
+):
     """Run the debugger to the specified address"""
+    dbg_ensure_running()
     ea = parse_address(address)
     if idaapi.run_to(ea):
-        return f"Debugger run to {hex(ea)}"
-    return f"Failed to run to address {hex(ea)}"
+        ip = ida_dbg.get_ip_val()
+        if ip is not None:
+            return hex(ip)
+    raise IDAError(f"Failed to run to address {hex(ea)}")
 
 @jsonrpc
 @idaread
 @unsafe
 def dbg_set_breakpoint(
     address: Annotated[str, "Set a breakpoint at the specified address"],
-) -> str:
+):
     """Set a breakpoint at the specified address"""
     ea = parse_address(address)
     if idaapi.add_bpt(ea, 0, idaapi.BPT_SOFT):
@@ -1227,20 +2137,44 @@ def dbg_set_breakpoint(
     breakpoints = list_breakpoints()
     for bpt in breakpoints:
         if bpt["ea"] == hex(ea):
-            return f"Breakpoint already exists at {hex(ea)}"
-    return f"Failed to set breakpoint at address {hex(ea)}"
+            return
+    raise IDAError(f"Failed to set breakpoint at address {hex(ea)}")
+
+@jsonrpc
+@idaread
+@unsafe
+def dbg_step_into():
+    """Step into the current instruction"""
+    dbg_ensure_running()
+    if idaapi.step_into():
+        ip = ida_dbg.get_ip_val()
+        if ip is not None:
+            return hex(ip)
+    raise IDAError("Failed to step into")
+
+@jsonrpc
+@idaread
+@unsafe
+def dbg_step_over():
+    """Step over the current instruction"""
+    dbg_ensure_running()
+    if idaapi.step_over():
+        ip = ida_dbg.get_ip_val()
+        if ip is not None:
+            return hex(ip)
+    raise IDAError("Failed to step over")
 
 @jsonrpc
 @idaread
 @unsafe
 def dbg_delete_breakpoint(
     address: Annotated[str, "del a breakpoint at the specified address"],
-) -> str:
-    """del a breakpoint at the specified address"""
+):
+    """Delete a breakpoint at the specified address"""
     ea = parse_address(address)
     if idaapi.del_bpt(ea):
-        return f"Breakpoint deleted at {hex(ea)}"
-    return f"Failed to delete breakpoint at address {hex(ea)}"
+        return
+    raise IDAError(f"Failed to delete breakpoint at address {hex(ea)}")
 
 @jsonrpc
 @idaread
@@ -1248,12 +2182,12 @@ def dbg_delete_breakpoint(
 def dbg_enable_breakpoint(
     address: Annotated[str, "Enable or disable a breakpoint at the specified address"],
     enable: Annotated[bool, "Enable or disable a breakpoint"],
-) -> str:
+):
     """Enable or disable a breakpoint at the specified address"""
     ea = parse_address(address)
     if idaapi.enable_bpt(ea, enable):
-        return f"Breakpoint {'enabled' if enable else 'disabled'} at {hex(ea)}"
-    return f"Failed to {'' if enable else 'disable '}breakpoint at address {hex(ea)}"
+        return
+    raise IDAError(f"Failed to {'' if enable else 'disable '}breakpoint at address {hex(ea)}")
 
 class MCP(idaapi.plugin_t):
     flags = idaapi.PLUGIN_KEEP

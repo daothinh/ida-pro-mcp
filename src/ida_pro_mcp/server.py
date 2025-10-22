@@ -6,11 +6,12 @@ import shutil
 import argparse
 import http.client
 from urllib.parse import urlparse
+from glob import glob
 
 from mcp.server.fastmcp import FastMCP
 
 # The log_level is necessary for Cline to work: https://github.com/jlowin/fastmcp/issues/81
-mcp = FastMCP("github.com/mrexodia/ida-pro-mcp", log_level="ERROR")
+mcp = FastMCP("ida-pro-mcp", log_level="ERROR")
 
 jsonrpc_request_id = 1
 # ida_host = "127.0.0.1"
@@ -74,7 +75,7 @@ class MCPVisitor(ast.NodeVisitor):
         self.types: dict[str, ast.ClassDef] = {}
         self.functions: dict[str, ast.FunctionDef] = {}
         self.descriptions: dict[str, str] = {}
-        self.unsafe: set[str] = set()
+        self.unsafe: list[str] = []
 
     def visit_FunctionDef(self, node):
         for decorator in node.decorator_list:
@@ -141,7 +142,7 @@ class MCPVisitor(ast.NodeVisitor):
                     assert node.name not in self.functions, f"Duplicate function: {node.name}"
                     self.functions[node.name] = node_nobody
                 elif decorator.id == "unsafe":
-                    self.unsafe.add(node.name)
+                    self.unsafe.append(node.name)
 
     def visit_ClassDef(self, node):
         for base in node.bases:
@@ -157,14 +158,18 @@ GENERATED_PY = os.path.join(SCRIPT_DIR, "server_generated.py")
 # NOTE: This is in the global scope on purpose
 if not os.path.exists(IDA_PLUGIN_PY):
     raise RuntimeError(f"IDA plugin not found at {IDA_PLUGIN_PY} (did you move it?)")
-with open(IDA_PLUGIN_PY, "r") as f:
+with open(IDA_PLUGIN_PY, "r", encoding="utf-8") as f:
     code = f.read()
 module = ast.parse(code, IDA_PLUGIN_PY)
 visitor = MCPVisitor()
 visitor.visit(module)
 code = """# NOTE: This file has been automatically generated, do not modify!
 # Architecture based on https://github.com/mrexodia/ida-pro-mcp (MIT License)
-from typing import Annotated, Optional, TypedDict, Generic, TypeVar
+import sys
+if sys.version_info >= (3, 12):
+    from typing import Annotated, Optional, TypedDict, Generic, TypeVar, NotRequired
+else:
+    from typing_extensions import Annotated, Optional, TypedDict, Generic, TypeVar, NotRequired
 from pydantic import Field
 
 T = TypeVar("T")
@@ -176,13 +181,25 @@ for type in visitor.types.values():
 for function in visitor.functions.values():
     code += ast.unparse(function)
     code += "\n\n"
-with open(GENERATED_PY, "w") as f:
-    f.write(code)
+
+try:
+    if os.path.exists(GENERATED_PY):
+        with open(GENERATED_PY, "rb") as f:
+            existing_code_bytes = f.read()
+    else:
+        existing_code_bytes = b""
+    code_bytes = code.encode("utf-8").replace(b"\r", b"")
+    if code_bytes != existing_code_bytes:
+        with open(GENERATED_PY, "wb") as f:
+            f.write(code_bytes)
+except:
+    print(f"Failed to generate code: {GENERATED_PY}", file=sys.stderr, flush=True)
+
 exec(compile(code, GENERATED_PY, "exec"))
 
 MCP_FUNCTIONS = ["check_connection"] + list(visitor.functions.keys())
 UNSAFE_FUNCTIONS = visitor.unsafe
-SAFE_FUNCTIONS = [f for f in visitor.functions.keys() if f not in UNSAFE_FUNCTIONS]
+SAFE_FUNCTIONS = [f for f in MCP_FUNCTIONS if f not in UNSAFE_FUNCTIONS]
 
 def generate_readme():
     print("README:")
@@ -195,12 +212,13 @@ def generate_readme():
                 signature += ", "
             signature += arg.arg
         signature += ")"
-        description = visitor.descriptions.get(function.name, "<no description>").strip()
+        description = visitor.descriptions.get(function.name, "<no description>").strip().split("\n")[0]
         if description[-1] != ".":
             description += "."
         return f"- `{signature}`: {description}"
     for safe_function in SAFE_FUNCTIONS:
-        print(get_description(safe_function))
+        if safe_function != "check_connection":
+            print(get_description(safe_function))
     print("\nUnsafe functions (`--unsafe` flag required):\n")
     for unsafe_function in UNSAFE_FUNCTIONS:
         print(get_description(unsafe_function))
@@ -251,17 +269,44 @@ def get_python_executable():
                 return python_executable
     return sys.executable
 
+def copy_python_env(env: dict[str, str]):
+    # Reference: https://docs.python.org/3/using/cmdline.html#environment-variables
+    python_vars = [
+        "PYTHONHOME",
+        "PYTHONPATH",
+        "PYTHONSAFEPATH",
+        "PYTHONPLATLIBDIR",
+        "PYTHONPYCACHEPREFIX",
+        "PYTHONNOUSERSITE",
+        "PYTHONUSERBASE",
+    ]
+    # MCP servers are run without inheriting the environment, so we need to forward
+    # the environment variables that affect Python's dependency resolution by hand.
+    # Issue: https://github.com/mrexodia/ida-pro-mcp/issues/111
+    result = False
+    for var in python_vars:
+        value = os.environ.get(var)
+        if value:
+            result = True
+            env[var] = value
+    return result
+
 def print_mcp_config():
+    mcp_config = {
+        "command": get_python_executable(),
+        "args": [
+            __file__,
+        ],
+        "timeout": 1800,
+        "disabled": False,
+    }
+    env = {}
+    if copy_python_env(env):
+        print(f"[WARNING] Custom Python environment variables detected")
+        mcp_config["env"] = env
     print(json.dumps({
             "mcpServers": {
-                mcp.name: {
-                    "command": get_python_executable(),
-                    "args": [
-                        __file__,
-                    ],
-                    "timeout": 1800,
-                    "disabled": False,
-                }
+                mcp.name: mcp_config
             }
         }, indent=2)
     )
@@ -269,27 +314,36 @@ def print_mcp_config():
 def install_mcp_servers(*, uninstall=False, quiet=False, env={}):
     if sys.platform == "win32":
         configs = {
-            "Cline": (os.path.join(os.getenv("APPDATA"), "Code", "User", "globalStorage", "saoudrizwan.claude-dev", "settings"), "cline_mcp_settings.json"),
-            "Roo Code": (os.path.join(os.getenv("APPDATA"), "Code", "User", "globalStorage", "rooveterinaryinc.roo-cline", "settings"), "mcp_settings.json"),
-            "Claude": (os.path.join(os.getenv("APPDATA"), "Claude"), "claude_desktop_config.json"),
+            "Cline": (os.path.join(os.getenv("APPDATA", ""), "Code", "User", "globalStorage", "saoudrizwan.claude-dev", "settings"), "cline_mcp_settings.json"),
+            "Roo Code": (os.path.join(os.getenv("APPDATA", ""), "Code", "User", "globalStorage", "rooveterinaryinc.roo-cline", "settings"), "mcp_settings.json"),
+            "Kilo Code": (os.path.join(os.getenv("APPDATA", ""), "Code", "User", "globalStorage", "kilocode.kilo-code", "settings"), "mcp_settings.json"),
+            "Claude": (os.path.join(os.getenv("APPDATA", ""), "Claude"), "claude_desktop_config.json"),
             "Cursor": (os.path.join(os.path.expanduser("~"), ".cursor"), "mcp.json"),
             "Windsurf": (os.path.join(os.path.expanduser("~"), ".codeium", "windsurf"), "mcp_config.json"),
+            "Claude Code": (os.path.join(os.path.expanduser("~")), ".claude.json"),
+            "LM Studio": (os.path.join(os.path.expanduser("~"), ".lmstudio"), "mcp.json"),
         }
     elif sys.platform == "darwin":
         configs = {
             "Cline": (os.path.join(os.path.expanduser("~"), "Library", "Application Support", "Code", "User", "globalStorage", "saoudrizwan.claude-dev", "settings"), "cline_mcp_settings.json"),
             "Roo Code": (os.path.join(os.path.expanduser("~"), "Library", "Application Support", "Code", "User", "globalStorage", "rooveterinaryinc.roo-cline", "settings"), "mcp_settings.json"),
+            "Kilo Code": (os.path.join(os.path.expanduser("~"), "Library", "Application Support", "Code", "User", "globalStorage", "kilocode.kilo-code", "settings"), "mcp_settings.json"),
             "Claude": (os.path.join(os.path.expanduser("~"), "Library", "Application Support", "Claude"), "claude_desktop_config.json"),
             "Cursor": (os.path.join(os.path.expanduser("~"), ".cursor"), "mcp.json"),
             "Windsurf": (os.path.join(os.path.expanduser("~"), ".codeium", "windsurf"), "mcp_config.json"),
+            "Claude Code": (os.path.join(os.path.expanduser("~")), ".claude.json"),
+            "LM Studio": (os.path.join(os.path.expanduser("~"), ".lmstudio"), "mcp.json"),
         }
     elif sys.platform == "linux":
         configs = {
             "Cline": (os.path.join(os.path.expanduser("~"), ".config", "Code", "User", "globalStorage", "saoudrizwan.claude-dev", "settings"), "cline_mcp_settings.json"),
             "Roo Code": (os.path.join(os.path.expanduser("~"), ".config", "Code", "User", "globalStorage", "rooveterinaryinc.roo-cline", "settings"), "mcp_settings.json"),
+            "Kilo Code": (os.path.join(os.path.expanduser("~"), ".config", "Code", "User", "globalStorage", "kilocode.kilo-code", "settings"), "mcp_settings.json"),
             # Claude not supported on Linux
             "Cursor": (os.path.join(os.path.expanduser("~"), ".cursor"), "mcp.json"),
             "Windsurf": (os.path.join(os.path.expanduser("~"), ".codeium", "windsurf"), "mcp_config.json"),
+            "Claude Code": (os.path.join(os.path.expanduser("~")), ".claude.json"),
+            "LM Studio": (os.path.join(os.path.expanduser("~"), ".lmstudio"), "mcp.json"),
         }
     else:
         print(f"Unsupported platform: {sys.platform}")
@@ -306,13 +360,13 @@ def install_mcp_servers(*, uninstall=False, quiet=False, env={}):
         if not os.path.exists(config_path):
             config = {}
         else:
-            with open(config_path, "r") as f:
+            with open(config_path, "r", encoding="utf-8") as f:
                 data = f.read().strip()
                 if len(data) == 0:
                     config = {}
                 else:
                     try:
-                        config = json.load(f)
+                        config = json.loads(data)
                     except json.decoder.JSONDecodeError:
                         if not quiet:
                             print(f"Skipping {name} uninstall\n  Config: {config_path} (invalid JSON)")
@@ -320,6 +374,11 @@ def install_mcp_servers(*, uninstall=False, quiet=False, env={}):
         if "mcpServers" not in config:
             config["mcpServers"] = {}
         mcp_servers = config["mcpServers"]
+        # Migrate old name
+        old_name = "github.com/mrexodia/ida-pro-mcp"
+        if old_name in mcp_servers:
+            mcp_servers[mcp.name] = mcp_servers[old_name]
+            del mcp_servers[old_name]
         if uninstall:
             if mcp.name not in mcp_servers:
                 if not quiet:
@@ -327,9 +386,12 @@ def install_mcp_servers(*, uninstall=False, quiet=False, env={}):
                 continue
             del mcp_servers[mcp.name]
         else:
+            # Copy environment variables from the existing server if present
             if mcp.name in mcp_servers:
-                for key, value in mcp_servers[mcp.name].get("env", {}):
+                for key, value in mcp_servers[mcp.name].get("env", {}).items():
                     env[key] = value
+            if copy_python_env(env):
+                print(f"[WARNING] Custom Python environment variables detected")
             mcp_servers[mcp.name] = {
                 "command": get_python_executable(),
                 "args": [
@@ -342,7 +404,7 @@ def install_mcp_servers(*, uninstall=False, quiet=False, env={}):
             }
             if env:
                 mcp_servers[mcp.name]["env"] = env
-        with open(config_path, "w") as f:
+        with open(config_path, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2)
         if not quiet:
             action = "Uninstalled" if uninstall else "Installed"
@@ -354,9 +416,14 @@ def install_mcp_servers(*, uninstall=False, quiet=False, env={}):
 
 def install_ida_plugin(*, uninstall: bool = False, quiet: bool = False):
     if sys.platform == "win32":
-        ida_plugin_folder = os.path.join(os.getenv("APPDATA"), "Hex-Rays", "IDA Pro", "plugins")
+        ida_folder = os.path.join(os.getenv("APPDATA"), "Hex-Rays", "IDA Pro")
     else:
-        ida_plugin_folder = os.path.join(os.path.expanduser("~"), ".idapro", "plugins")
+        ida_folder = os.path.join(os.path.expanduser("~"), ".idapro")
+    free_licenses = glob(os.path.join(ida_folder, "idafree_*.hexlic"))
+    if len(free_licenses) > 0:
+        print(f"IDA Free does not support plugins and cannot be used. Purchase and install IDA Pro instead.")
+        sys.exit(1)
+    ida_plugin_folder = os.path.join(ida_folder, "plugins")
     plugin_destination = os.path.join(ida_plugin_folder, "mcp-plugin.py")
     if uninstall:
         if not os.path.exists(plugin_destination):
@@ -407,13 +474,13 @@ def main():
         return
 
     if args.install:
-        install_mcp_servers()
         install_ida_plugin()
+        install_mcp_servers()
         return
 
     if args.uninstall:
-        install_mcp_servers(uninstall=True)
         install_ida_plugin(uninstall=True)
+        install_mcp_servers(uninstall=True)
         return
 
     # NOTE: Developers can use this to generate the README
