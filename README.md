@@ -6,87 +6,34 @@ https://github.com/user-attachments/assets/6ebeaa92-a9db-43fa-b756-eececce2aca0
 
 The binaries and prompt for the video are available in the [mcp-reversing-dataset](https://github.com/mrexodia/mcp-reversing-dataset) repository.
 
-Available functionality:
-
-- `check_connection()`: Check if the IDA plugin is running.
-- `get_metadata()`: Get metadata about the current IDB.
-- `get_function_by_name(name)`: Get a function by its name.
-- `get_function_by_address(address)`: Get a function by its address.
-- `get_current_address()`: Get the address currently selected by the user.
-- `get_current_function()`: Get the function currently selected by the user.
-- `convert_number(text, size)`: Convert a number (decimal, hexadecimal) to different representations.
-- `list_functions_filter(offset, count, filter)`: List matching functions in the database (paginated).
-- `list_functions(offset, count)`: List all functions in the database (paginated).
-- `list_globals_filter(offset, count, filter)`: List matching globals in the database (paginated, filtered).
-- `list_globals(offset, count)`: List all globals in the database (paginated).
-- `list_imports(offset, count)`: List all imported symbols with their name and module (paginated).
-- `list_strings_filter(offset, count, filter)`: List matching strings in the database (paginated, filtered).
-- `list_strings(offset, count)`: List all strings in the database (paginated).
-- `list_local_types()`: List all Local types in the database.
-- `decompile_function(address)`: Decompile a function at the given address.
-- `disassemble_function(start_address)`: Get assembly code for a function (API-compatible with older IDA builds).     
-- `get_xrefs_to(address)`: Get all cross references to the given address.
-- `get_xrefs_to_field(struct_name, field_name)`: Get all cross references to a named struct field (member).
-- `get_callees(function_address)`: Get all the functions called (callees) by the function at function_address.        
-- `get_callers(function_address)`: Get all callers of the given address.
-- `get_entry_points()`: Get all entry points in the database.
-- `set_comment(address, comment)`: Set a comment for a given address in the function disassembly and pseudocode.      
-- `rename_local_variable(function_address, old_name, new_name)`: Rename a local variable in a function.
-- `rename_global_variable(old_name, new_name)`: Rename a global variable.
-- `set_global_variable_type(variable_name, new_type)`: Set a global variable's type.
-- `patch_address_assembles(address, instructions)`: <no description>.
-- `get_global_variable_value_by_name(variable_name)`: Read a global variable's value (if known at compile-time).      
-- `get_global_variable_value_at_address(address)`: Read a global variable's value by its address (if known at compile-time).
-- `rename_function(function_address, new_name)`: Rename a function.
-- `set_function_prototype(function_address, prototype)`: Set a function's prototype.
-- `declare_c_type(c_declaration)`: Create or update a local type from a C declaration.
-- `set_local_variable_type(function_address, variable_name, new_type)`: Set a local variable's type.
-- `get_stack_frame_variables(function_address)`: Retrieve the stack frame variables for a given function.
-- `get_defined_structures()`: Returns a list of all defined structures.
-- `analyze_struct_detailed(name)`: Detailed analysis of a structure with all fields.
-- `get_struct_at_address(address, struct_name)`: Get structure field values at a specific address.
-- `get_struct_info_simple(name)`: Simple function to get basic structure information.
-- `search_structures(filter)`: Search for structures by name pattern.
-- `rename_stack_frame_variable(function_address, old_name, new_name)`: Change the name of a stack variable for an IDA 
-function.
-- `create_stack_frame_variable(function_address, offset, variable_name, type_name)`: For a given function, create a stack variable at an offset and with a specific type.
-- `set_stack_frame_variable_type(function_address, variable_name, type_name)`: For a given disassembled function, set 
-the type of a stack variable.
-- `delete_stack_frame_variable(function_address, variable_name)`: Delete the named stack variable for a given function.
-- `read_memory_bytes(memory_address, size)`: Read bytes at a given address.
-- `data_read_byte(address)`: Read the 1 byte value at the specified address.
-- `data_read_word(address)`: Read the 2 byte value at the specified address as a WORD.
-- `data_read_dword(address)`: Read the 4 byte value at the specified address as a DWORD.
-- `data_read_qword(address)`: Read the 8 byte value at the specified address as a QWORD.
-- `data_read_string(address)`: Read the string at the specified address.
-
-Unsafe functions (`--unsafe` flag required):
-
-- `dbg_get_registers()`: Get all registers and their values. This function is only available when debugging.
-- `dbg_get_call_stack()`: Get the current call stack.
-- `dbg_list_breakpoints()`: List all breakpoints in the program.
-- `dbg_start_process()`: Start the debugger, returns the current instruction pointer.
-- `dbg_exit_process()`: Exit the debugger.
-- `dbg_continue_process()`: Continue the debugger, returns the current instruction pointer.
-- `dbg_run_to(address)`: Run the debugger to the specified address.
-- `dbg_set_breakpoint(address)`: Set a breakpoint at the specified address.
-- `dbg_step_into()`: Step into the current instruction.
-- `dbg_step_over()`: Step over the current instruction.
-- `dbg_delete_breakpoint(address)`: Delete a breakpoint at the specified address.
-- `dbg_enable_breakpoint(address, enable)`: Enable or disable a breakpoint at the specified address.
-
 ## Prerequisites
 
-- [Python](https://www.python.org/downloads/) (**3.11 or higher**) 
+- [Python](https://www.python.org/downloads/) (**3.11 or higher**)
   - Use `idapyswitch` to switch to the newest Python version
 - [IDA Pro](https://hex-rays.com/ida-pro) (8.3 or higher, 9 recommended), **IDA Free is not supported**
 - Supported MCP Client (pick one you like)
-  - [Cline](https://cline.bot)
-  - [Roo Code](https://roocode.com)
+  - [Amazon Q Developer CLI](https://aws.amazon.com/q/developer/)
+  - [Augment Code](https://www.augmentcode.com/)
   - [Claude](https://claude.ai/download)
+  - [Claude Code](https://www.anthropic.com/code)
+  - [Cline](https://cline.bot)
+  - [Codex](https://github.com/openai/codex)
+  - [Copilot CLI](https://docs.github.com/en/copilot)
+  - [Crush](https://github.com/charmbracelet/crush)
   - [Cursor](https://cursor.com)
-  - [VSCode Agent Mode](https://github.blog/news-insights/product-news/github-copilot-agent-mode-activated/)
+  - [Gemini CLI](https://google-gemini.github.io/gemini-cli/)
+  - [Kilo Code](https://www.kilocode.com/)
+  - [Kiro](https://kiro.dev/)
+  - [LM Studio](https://lmstudio.ai/)
+  - [Opencode](https://opencode.ai/)
+  - [Qodo Gen](https://www.qodo.ai/)
+  - [Qwen Coder](https://qwenlm.github.io/qwen-code-docs/)
+  - [Roo Code](https://roocode.com)
+  - [Trae](https://trae.ai/)
+  - [VS Code](https://code.visualstudio.com/)
+  - [Warp](https://www.warp.dev/)
   - [Windsurf](https://windsurf.com)
+  - [Zed](https://zed.dev/)
   - [Other MCP Clients](https://modelcontextprotocol.io/clients#example-clients): Run `ida-pro-mcp --config` to get the JSON config for your client.
 
 ## Installation
@@ -104,7 +51,7 @@ Configure the MCP servers and install the IDA Plugin:
 ida-pro-mcp --install
 ```
 
-**Important**: Make sure you completely restart IDA/Visual Studio Code/Claude for the installation to take effect. Claude runs in the background and you need to quit it from the tray icon.
+**Important**: Make sure you completely restart IDA and your MCP client for the installation to take effect. Some clients (like Claude) run in the background and need to be quit from the tray icon.
 
 https://github.com/user-attachments/assets/65ed3373-a187-4dd5-a807-425dca1d8ee9
 
@@ -114,18 +61,55 @@ _Note_: You need to load a binary in IDA before the plugin menu will show up.
 
 LLMs are prone to hallucinations and you need to be specific with your prompting. For reverse engineering the conversion between integers and bytes are especially problematic. Below is a minimal example prompt, feel free to start a discussion or open an issue if you have good results with a different prompt:
 
-> Your task is to analyze a crackme in IDA Pro. You can use the MCP tools to retrieve information. In general use the following strategy:
-> - Inspect the decompilation and add comments with your findings
-> - Rename variables to more sensible names
-> - Change the variable and argument types if necessary (especially pointer and array types)
-> - Change function names to be more descriptive
-> - If more details are necessary, disassemble the function and add comments with your findings
-> - NEVER convert number bases yourself. Use the convert_number MCP tool if needed!
-> - Do not attempt brute forcing, derive any solutions purely from the disassembly and simple python scripts
-> - Create a report.md with your findings and steps taken at the end
-> - When you find a solution, prompt to user for feedback with the password you found
+```md
+Your task is to analyze a crackme in IDA Pro. You can use the MCP tools to retrieve information. In general use the following strategy:
+
+- Inspect the decompilation and add comments with your findings
+- Rename variables to more sensible names
+- Change the variable and argument types if necessary (especially pointer and array types)
+- Change function names to be more descriptive
+- If more details are necessary, disassemble the function and add comments with your findings
+- NEVER convert number bases yourself. Use the `int_convert` MCP tool if needed!
+- Do not attempt brute forcing, derive any solutions purely from the disassembly and simple python scripts
+- Create a report.md with your findings and steps taken at the end
+- When you find a solution, prompt to user for feedback with the password you found
+```
 
 This prompt was just the first experiment, please share if you found ways to improve the output!
+
+Another prompt by [@can1357](https://github.com/can1357):
+
+```md
+Your task is to create a complete and comprehensive reverse engineering analysis. Reference AGENTS.md to understand the project goals and ensure the analysis serves our purposes.
+
+Use the following systematic methodology:
+
+1. **Decompilation Analysis**
+   - Thoroughly inspect the decompiler output
+   - Add detailed comments documenting your findings
+   - Focus on understanding the actual functionality and purpose of each component (do not rely on old, incorrect comments)
+
+2. **Improve Readability in the Database**
+   - Rename variables to sensible, descriptive names
+   - Correct variable and argument types where necessary (especially pointers and array types)
+   - Update function names to be descriptive of their actual purpose
+
+3. **Deep Dive When Needed**
+   - If more details are necessary, examine the disassembly and add comments with findings
+   - Document any low-level behaviors that aren't clear from the decompilation alone
+   - Use sub-agents to perform detailed analysis
+
+4. **Important Constraints**
+   - NEVER convert number bases yourself - use the int_convert MCP tool if needed
+   - Use MCP tools to retrieve information as necessary
+   - Derive all conclusions from actual analysis, not assumptions
+
+5. **Documentation**
+   - Produce comprehensive RE/*.md files with your findings
+   - Document the steps taken and methodology used
+   - When asked by the user, ensure accuracy over previous analysis file
+   - Organize findings in a way that serves the project goals outlined in AGENTS.md or CLAUDE.md
+```
 
 Live stream discussing prompting and showing some real-world malware analysis:
 
@@ -133,7 +117,7 @@ Live stream discussing prompting and showing some real-world malware analysis:
 
 ## Tips for Enhancing LLM Accuracy
 
-Large Language Models (LLMs) are powerful tools, but they can sometimes struggle with complex mathematical calculations or exhibit "hallucinations" (making up facts). Make sure to tell the LLM to use the `conver_number` MCP and you might also need [math-mcp](https://github.com/EthanHenrickson/math-mcp) for certain operations.
+Large Language Models (LLMs) are powerful tools, but they can sometimes struggle with complex mathematical calculations or exhibit "hallucinations" (making up facts). Make sure to tell the LLM to use the `int_convert` MCP tool and you might also need [math-mcp](https://github.com/EthanHenrickson/math-mcp) for certain operations.
 
 Another thing to keep in mind is that LLMs will not perform well on obfuscated code. Before trying to use an LLM to solve the problem, take a look around the binary and spend some time (automatically) removing the following things:
 
@@ -161,62 +145,145 @@ uv run idalib-mcp --host 127.0.0.1 --port 8745 path/to/executable
 
 _Note_: The `idalib` feature was contributed by [Willi Ballenthin](https://github.com/williballenthin).
 
-## Manual Installation
 
-_Note_: This section is for LLMs and power users who need detailed installation instructions.
+## MCP Resources
 
-<details>
+**Resources** represent browsable state (read-only data) following MCP's philosophy.
 
-## Manual MCP Server Installation (Cline/Roo Code)
+**Core IDB State:**
+- `ida://idb/metadata` - IDB file info (path, arch, base, size, hashes)
+- `ida://idb/segments` - Memory segments with permissions
+- `ida://idb/entrypoints` - Entry points (main, TLS callbacks, etc.)
 
-To install the MCP server yourself, follow these steps:
+**UI State:**
+- `ida://cursor` - Current cursor position and function
+- `ida://selection` - Current selection range
 
-1. Install [uv](https://github.com/astral-sh/uv) globally:
-   - Windows: `pip install uv`
-   - Linux/Mac: `curl -LsSf https://astral.sh/uv/install.sh | sh`
-2. Clone this repository, for this example `C:\MCP\ida-pro-mcp`.
-3. Navigate to the Cline/Roo Code _MCP Servers_ configuration (see screenshot).
-4. Click on the _Installed_ tab.
-5. Click on _Configure MCP Servers_, which will open `cline_mcp_settings.json`.
-6. Add the `ida-pro-mcp` server:
+**Type Information:**
+- `ida://types` - All local types
+- `ida://structs` - All structures/unions
+- `ida://struct/{name}` - Structure definition with fields
 
-```json
-{
-  "mcpServers": {
-    "github.com/mrexodia/ida-pro-mcp": {
-      "command": "uv",
-      "args": [
-        "--directory",
-        "c:\\MCP\\ida-pro-mcp",
-        "run",
-        "server.py",
-        "--install-plugin"
-      ],
-      "timeout": 1800,
-      "disabled": false
-    }
-  }
-}
+**Lookups:**
+- `ida://import/{name}` - Import details by name
+- `ida://export/{name}` - Export details by name
+- `ida://xrefs/from/{addr}` - Cross-references from address
+
+## Core Functions
+
+- `lookup_funcs(queries)`: Get function(s) by address or name (auto-detects, accepts list or comma-separated string).
+- `int_convert(inputs)`: Convert numbers to different formats (decimal, hex, bytes, ASCII, binary).
+- `list_funcs(queries)`: List functions (paginated, filtered).
+- `list_globals(queries)`: List global variables (paginated, filtered).
+- `imports(offset, count)`: List all imported symbols with module names (paginated).
+- `decompile(addr)`: Decompile function at the given address.
+- `disasm(addr)`: Disassemble function with full details (arguments, stack frame, etc).
+- `xrefs_to(addrs)`: Get all cross-references to address(es).
+- `xrefs_to_field(queries)`: Get cross-references to specific struct field(s).
+- `callees(addrs)`: Get functions called by function(s) at address(es).
+
+## Modification Operations
+
+- `set_comments(items)`: Set comments at address(es) in both disassembly and decompiler views.
+- `patch_asm(items)`: Patch assembly instructions at address(es).
+- `declare_type(decls)`: Declare C type(s) in the local type library.
+
+## Memory Reading Operations
+
+- `get_bytes(addrs)`: Read raw bytes at address(es).
+- `get_int(queries)`: Read integer values using ty (i8/u64/i16le/i16be/etc).
+- `get_string(addrs)`: Read null-terminated string(s).
+- `get_global_value(queries)`: Read global variable value(s) by address or name (auto-detects, compile-time values).
+
+## Stack Frame Operations
+
+- `stack_frame(addrs)`: Get stack frame variables for function(s).
+- `declare_stack(items)`: Create stack variable(s) at specified offset(s).
+- `delete_stack(items)`: Delete stack variable(s) by name.
+
+## Structure Operations
+
+- `read_struct(queries)`: Read structure field values at specific address(es).
+- `search_structs(filter)`: Search structures by name pattern.
+
+## Debugger Operations (Extension)
+
+Debugger tools are hidden by default. Enable with `?ext=dbg` query parameter:
+
+```
+http://127.0.0.1:13337/mcp?ext=dbg
 ```
 
-To check if the connection works you can perform the following tool call:
+**Control:**
+- `dbg_start()`: Start debugger process.
+- `dbg_exit()`: Exit debugger process.
+- `dbg_continue()`: Continue execution.
+- `dbg_run_to(addr)`: Run to address.
+- `dbg_step_into()`: Step into instruction.
+- `dbg_step_over()`: Step over instruction.
 
-```
-<use_mcp_tool>
-<server_name>github.com/mrexodia/ida-pro-mcp</server_name>
-<tool_name>check_connection</tool_name>
-<arguments></arguments>
-</use_mcp_tool>
-```
+**Breakpoints:**
+- `dbg_bps()`: List all breakpoints.
+- `dbg_add_bp(addrs)`: Add breakpoint(s).
+- `dbg_delete_bp(addrs)`: Delete breakpoint(s).
+- `dbg_toggle_bp(items)`: Enable/disable breakpoint(s).
 
-## IDA Plugin installation
+**Registers:**
+- `dbg_regs()`: All registers, current thread.
+- `dbg_regs_all()`: All registers, all threads.
+- `dbg_regs_remote(tids)`: All registers, specific thread(s).
+- `dbg_gpregs()`: GP registers, current thread.
+- `dbg_gpregs_remote(tids)`: GP registers, specific thread(s).
+- `dbg_regs_named(names)`: Named registers, current thread.
+- `dbg_regs_named_remote(tid, names)`: Named registers, specific thread.
 
-The IDA Pro plugin will be installed automatically when the MCP server starts. If you disabled the `--install-plugin` option, use the following steps:
+**Stack & Memory:**
+- `dbg_stacktrace()`: Call stack with module/symbol info.
+- `dbg_read(regions)`: Read memory from debugged process.
+- `dbg_write(regions)`: Write memory to debugged process.
 
-1. Copy (**not move**) `src/ida_pro_mcp/mcp-plugin.py` in your plugins folder (`%appdata%\Hex-Rays\IDA Pro\plugins` on Windows).
-2. Open an IDB and click `Edit -> Plugins -> MCP` to start the server.
+## Advanced Analysis Operations
 
-</details>
+- `py_eval(code)`: Execute arbitrary Python code in IDA context (returns dict with result/stdout/stderr, supports Jupyter-style evaluation).
+- `analyze_funcs(addrs)`: Comprehensive function analysis (decompilation, assembly, xrefs, callees, callers, strings, constants, basic blocks).
+
+## Pattern Matching & Search
+
+- `find_regex(queries)`: Search strings with case-insensitive regex (paginated).
+- `find_bytes(patterns, limit=1000, offset=0)`: Find byte pattern(s) in binary (e.g., "48 8B ?? ??"). Max limit: 10000.
+- `find_insns(sequences, limit=1000, offset=0)`: Find instruction sequence(s) in code. Max limit: 10000.
+- `find(type, targets, limit=1000, offset=0)`: Advanced search (immediate values, strings, data/code references). Max limit: 10000.
+
+## Control Flow Analysis
+
+- `basic_blocks(addrs)`: Get basic blocks with successors and predecessors.
+
+## Type Operations
+
+- `set_type(edits)`: Apply type(s) to functions, globals, locals, or stack variables.
+- `infer_types(addrs)`: Infer types at address(es) using Hex-Rays or heuristics.
+
+## Export Operations
+
+- `export_funcs(addrs, format)`: Export function(s) in specified format (json, c_header, or prototypes).
+
+## Graph Operations
+
+- `callgraph(roots, max_depth)`: Build call graph from root function(s) with configurable depth.
+
+## Batch Operations
+
+- `rename(batch)`: Unified batch rename operation for functions, globals, locals, and stack variables (accepts dict with optional `func`, `data`, `local`, `stack` keys).
+- `patch(patches)`: Patch multiple byte sequences at once.
+- `put_int(items)`: Write integer values using ty (i8/u64/i16le/i16be/etc).
+
+**Key Features:**
+
+- **Type-safe API**: All functions use strongly-typed parameters with TypedDict schemas for better IDE support and LLM structured outputs
+- **Batch-first design**: Most operations accept both single items and lists
+- **Consistent error handling**: All batch operations return `[{..., error: null|string}, ...]`
+- **Cursor-based pagination**: Search functions return `cursor: {next: offset}` or `{done: true}` (default limit: 1000, enforced max: 10000 to prevent token overflow)
+- **Performance**: Strings are cached with MD5-based invalidation to avoid repeated `build_strlist` calls in large projects
 
 ## Comparison with other MCP servers
 
@@ -236,14 +303,14 @@ Feel free to open a PR to add your IDA Pro MCP server here.
 
 ## Development
 
-Adding new features is a super easy and streamlined process. All you have to do is add a new `@jsonrpc` function to [`mcp-plugin.py`](https://github.com/mrexodia/ida-pro-mcp/blob/164df8cf4ae251cc9cc0f464591fa6df8e0d9df4/src/ida_pro_mcp/mcp-plugin.py#L406-L419) and your function will be available in the MCP server without any additional boilerplate! Below is a video where I add the `get_metadata` function in less than 2 minutes (including testing):
+Adding new features is a super easy and streamlined process. All you have to do is add a new `@tool` function to the modular API files in `src/ida_pro_mcp/ida_mcp/api_*.py` and your function will be available in the MCP server without any additional boilerplate! Below is a video where I add the `get_metadata` function in less than 2 minutes (including testing):
 
 https://github.com/user-attachments/assets/951de823-88ea-4235-adcb-9257e316ae64
 
 To test the MCP server itself:
 
 ```sh
-uv run mcp dev src/ida_pro_mcp/server.py
+npx -y @modelcontextprotocol/inspector
 ```
 
 This will open a web interface at http://localhost:5173 and allow you to interact with the MCP tools for testing.
@@ -259,4 +326,3 @@ Generate the changelog of direct commits to `main`:
 ```sh
 git log --first-parent --no-merges 1.2.0..main "--pretty=- %s"
 ```
-
